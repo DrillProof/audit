@@ -1,0 +1,84 @@
+package aws
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// readVerbs are the only operation prefixes v1 is permitted to call.
+var readVerbs = []string{"Describe", "List", "Get"}
+
+// mutatingVerbs are spelled out so a failure message is unambiguous about why.
+var mutatingVerbs = []string{
+	"Create", "Delete", "Update", "Modify", "Put", "Start", "Stop",
+	"Restore", "Copy", "Cancel", "Tag", "Untag", "Disassociate",
+	"Associate", "Attach", "Detach", "Enable", "Disable", "Reset",
+	"Register", "Deregister", "Revoke", "Terminate", "Run", "Import",
+	"Export", "Set", "Add", "Remove",
+}
+
+// TestInterfacesAreReadOnly is the enforcement mechanism for the spec's
+// "never call any mutating API in v1" rule. It reflects over every AWS
+// interface in this package: if anyone adds a mutating operation, this fails
+// rather than waiting for a reviewer to notice.
+func TestInterfacesAreReadOnly(t *testing.T) {
+	interfaces := map[string]reflect.Type{
+		"STSAPI":    reflect.TypeOf((*STSAPI)(nil)).Elem(),
+		"EC2API":    reflect.TypeOf((*EC2API)(nil)).Elem(),
+		"RDSAPI":    reflect.TypeOf((*RDSAPI)(nil)).Elem(),
+		"BackupAPI": reflect.TypeOf((*BackupAPI)(nil)).Elem(),
+		"EKSAPI":    reflect.TypeOf((*EKSAPI)(nil)).Elem(),
+		"S3API":     reflect.TypeOf((*S3API)(nil)).Elem(),
+	}
+
+	for name, typ := range interfaces {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, reflect.Interface, typ.Kind())
+			require.Greater(t, typ.NumMethod(), 0, "%s exposes no operations", name)
+
+			for i := 0; i < typ.NumMethod(); i++ {
+				method := typ.Method(i).Name
+
+				hasReadVerb := false
+				for _, v := range readVerbs {
+					if strings.HasPrefix(method, v) {
+						hasReadVerb = true
+						break
+					}
+				}
+				assert.True(t, hasReadVerb,
+					"%s.%s does not start with a read verb (%s) — v1 is read-only",
+					name, method, strings.Join(readVerbs, "/"))
+
+				for _, v := range mutatingVerbs {
+					assert.False(t, strings.HasPrefix(method, v),
+						"%s.%s starts with mutating verb %q — v1 must never mutate",
+						name, method, v)
+				}
+			}
+		})
+	}
+}
+
+func TestIsAccessDenied(t *testing.T) {
+	assert.False(t, IsAccessDenied(nil))
+	assert.True(t, IsAccessDenied(&stubAPIErr{code: "AccessDeniedException"}))
+	assert.True(t, IsAccessDenied(&stubAPIErr{code: "UnauthorizedOperation"}))
+	assert.True(t, IsAccessDenied(&stubAPIErr{code: "Weird", msg: "User is not authorized to perform ec2:DescribeVolumes"}))
+	assert.False(t, IsAccessDenied(&stubAPIErr{code: "Throttling", msg: "Rate exceeded"}))
+}
+
+func TestIsNotFound(t *testing.T) {
+	assert.False(t, IsNotFound(nil))
+	assert.True(t, IsNotFound(&stubAPIErr{code: "ObjectLockConfigurationNotFoundError"}))
+	assert.False(t, IsNotFound(&stubAPIErr{code: "AccessDenied"}))
+}
+
+func TestErrorCode(t *testing.T) {
+	assert.Equal(t, "Throttling", ErrorCode(&stubAPIErr{code: "Throttling"}))
+	assert.Equal(t, "", ErrorCode(assert.AnError))
+}

@@ -1,0 +1,23 @@
+# Local audit reports — an infra posture report should never be committed.
+audit-report.*
+drillproof-audit-report.*
+*.sarif
+
+# Built binary (the module builds to ./drillproof by default)
+/drillproof
+/drillproof-audit
+dist/
+
+# Test and coverage output
+coverage.out
+coverage.html
+*.test
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp

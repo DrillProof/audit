@@ -1,0 +1,141 @@
+# goreleaser configuration for drillproof-audit.
+#
+#   goreleaser check              validate this file
+#   goreleaser release --snapshot --clean    build locally without publishing
+#   goreleaser release --clean    tagged release (CI only)
+version: 2
+
+project_name: drillproof-audit
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: drillproof
+    main: .
+    binary: drillproof
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    # 32-bit and other combinations are not worth supporting for a tool that
+    # talks to cloud APIs from an engineer's machine or a CI runner.
+    ignore:
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.CommitDate}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    ids: [drillproof]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+  groups:
+    - title: Features
+      regexp: '^feat'
+      order: 0
+    - title: Fixes
+      regexp: '^fix'
+      order: 1
+    - title: Other
+      order: 99
+
+# Homebrew tap: `brew install drillproof/tap/audit`
+#
+# Casks rather than formulae: goreleaser deprecated `brews` in favour of
+# `homebrew_casks`, because a cask installs a prebuilt binary, which is what we
+# ship. Formulae are for things Homebrew builds from source.
+homebrew_casks:
+  - name: audit
+    ids: [default]
+    binaries:
+      - drillproof
+    repository:
+      owner: drillproof
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: https://drillproof.com
+    description: Read-only recoverability audit for AWS and Kubernetes backups
+    license: Apache-2.0
+    completions:
+      bash: completions/drillproof.bash
+      zsh: completions/drillproof.zsh
+      fish: completions/drillproof.fish
+    hooks:
+      post:
+        # The binary is not notarised, so Gatekeeper quarantines it and the
+        # first run dies with "cannot be opened". Stripping the attribute at
+        # install time is the documented workaround until signing is set up.
+        install: |
+          if OS.mac?
+            system "xattr", "-d", "-r", "com.apple.quarantine", "#{staged_path}/drillproof"
+          end
+
+# dockers_v2 builds multi-platform images in one block, so it replaces both the
+# old per-arch `dockers` entries and the `docker_manifests` that stitched them
+# together.
+dockers_v2:
+  - id: drillproof
+    ids: [drillproof]
+    dockerfile: Dockerfile
+    images:
+      - drillproof/audit
+    tags:
+      - "{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: drillproof-audit
+      org.opencontainers.image.description: Read-only recoverability audit for AWS and Kubernetes backups
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: Apache-2.0
+      org.opencontainers.image.source: https://github.com/drillproof/audit
+
+release:
+  github:
+    owner: drillproof
+    name: audit
+  footer: |
+    ---
+
+    **Privacy**: this tool runs locally with your own credentials, is strictly
+    read-only, and sends nothing anywhere. See the README for the exact IAM
+    policy it needs, or run `drillproof audit init`.

@@ -1,0 +1,40 @@
+# golangci-lint configuration.
+#
+# Pinned deliberately: with `version: latest` in CI and no config here, a new
+# golangci-lint release can enable a new linter and turn a green build red
+# without anyone changing a line of Go. The set below is explicit, and CI pins
+# the binary version to match.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+  settings:
+    errcheck:
+      # Writes to stdout are checked through the `out`/`errWriter` helpers in
+      # cmd/ and internal/report, so an unchecked Fprint is a real oversight
+      # rather than noise worth excluding.
+      check-type-assertions: true
+      check-blank: false
+
+    staticcheck:
+      checks:
+        - all
+
+  exclusions:
+    rules:
+      # Test fakes deliberately mention mutating verb names while asserting
+      # they are absent, and table-driven tests ignore writer errors.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
