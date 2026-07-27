@@ -2,6 +2,7 @@
 audit-report.*
 drillproof-audit-report.*
 *.sarif
+*.md
 
 # Built binary (the module builds to ./drillproof by default)
 /drillproof
