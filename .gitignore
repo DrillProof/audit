@@ -22,3 +22,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Generated at release time by the goreleaser before-hooks.
+completions/

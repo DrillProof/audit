@@ -11,10 +11,20 @@ before:
   hooks:
     - go mod tidy
     - go test ./...
+    # The Homebrew cask below ships shell completions. Nothing else creates
+    # them, so without these the release fails on a missing file — and it fails
+    # at the packaging step, after the binaries have already been built.
+    #
+    # `sh -c` because goreleaser hooks are exec'd, not run through a shell, so a
+    # bare `>` redirect would be passed to cobra as an argument.
+    - mkdir -p completions
+    - sh -c "go run ./cmd/drillproof completion bash > completions/drillproof.bash"
+    - sh -c "go run ./cmd/drillproof completion zsh  > completions/drillproof.zsh"
+    - sh -c "go run ./cmd/drillproof completion fish > completions/drillproof.fish"
 
 builds:
   - id: drillproof
-    main: .
+    main: ./cmd/drillproof
     binary: drillproof
     env:
       - CGO_ENABLED=0
