@@ -1,0 +1,78 @@
+name: Release Please
+
+# Version selection, automated from Conventional Commits.
+#
+# How it works: on every push to master, release-please looks at the commits
+# since the last release and opens (or updates) a single "chore(master): release
+# X.Y.Z" pull request containing the version bump and the CHANGELOG entry.
+# Nothing is released while that PR sits open. **Merging it is the act of
+# releasing** — that is when the tag and the GitHub Release are created.
+#
+# ── Why goreleaser runs HERE and not in release.yml ──────────────────────────
+# A tag or release created by the default GITHUB_TOKEN does **not** trigger
+# other workflows. GitHub suppresses that cascade deliberately, to stop
+# workflows triggering each other forever. So release.yml — which fires on
+# `push: tags: v*` — would never see release-please's tag, and the release would
+# sit there with a changelog and no binaries attached.
+#
+# Two ways out: give release-please a PAT so its tag looks like a human's, or
+# build in the same workflow. Building here is chosen because it needs no extra
+# secret, and a PAT that can push tags is a broad thing to leave lying around.
+#
+# release.yml still exists and still works for a manually pushed tag — useful
+# for an emergency release that should not wait for a PR round trip.
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.release.outputs.releases_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Only runs on the push that merges the release PR.
+  goreleaser:
+    needs: release-please
+    if: needs.release-please.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The tag release-please just created, not the branch tip — goreleaser
+          # refuses to build from a commit that is not exactly a tag.
+          ref: ${{ needs.release-please.outputs.tag }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

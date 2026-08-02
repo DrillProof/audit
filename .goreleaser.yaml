@@ -143,6 +143,14 @@ release:
   github:
     owner: drillproof
     name: audit
+
+  # release-please creates the GitHub Release (with the changelog) when its PR
+  # is merged; goreleaser then runs against that same tag. Without `append` it
+  # would try to create a release that already exists and fail the job.
+  #
+  # `append` also keeps release-please's changelog body intact — goreleaser adds
+  # its artifacts rather than overwriting the notes a human just reviewed.
+  mode: append
   footer: |
     ---
 
