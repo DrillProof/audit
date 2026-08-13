@@ -63,7 +63,20 @@ sboms:
   - artifacts: archive
 
 snapshot:
-  version_template: "{{ incpatch .Version }}-next"
+  # Deliberately NOT `{{ incpatch .Version }}-next`. `incpatch` parses .Version
+  # as semver, and .Version comes from the most recent tag — which for a while
+  # was release-please's component-prefixed `drillproof-audit-v1.1.0`. That is
+  # not semver, so the CI snapshot job died at the first step with
+  # "failed to parse snapshot name: invalid semantic version", while every real
+  # build and test passed.
+  #
+  # `include-component-in-tag: false` in release-please-config.json stops new
+  # tags from being prefixed, but the old tag stays in history and is still what
+  # goreleaser resolves against, so that alone does not unbreak this. A commit
+  # SHA needs no parsing at all, and snapshot version numbers are throwaway —
+  # nothing is published from snapshot mode — so there is nothing to gain from
+  # making this job's success depend on how tags happen to be spelled.
+  version_template: "0.0.0-next-{{ .ShortCommit }}"
 
 changelog:
   sort: asc
@@ -123,8 +136,19 @@ dockers_v2:
   - id: drillproof
     ids: [drillproof]
     dockerfile: Dockerfile
+    # GHCR, not Docker Hub. Three reasons, in order of how much they matter:
+    #   1. Docker Hub's anonymous pull limit (100 per 6h per IP) lands on USERS,
+    #      and a shared corporate NAT exhausts it quickly. GHCR does not rate
+    #      limit anonymous pulls of public images.
+    #   2. The built-in GITHUB_TOKEN can push here, so no DOCKERHUB_* secrets.
+    #   3. The namespace matches the source repo, so the package links itself to
+    #      it via the org.opencontainers.image.source label below.
+    #
+    # MUST be lowercase. The GitHub org is spelled `DrillProof`, but GHCR
+    # rejects any uppercase in an image reference — `ghcr.io/DrillProof/audit`
+    # fails at push with an unhelpful error.
     images:
-      - drillproof/audit
+      - ghcr.io/drillproof/audit
     tags:
       - "{{ .Version }}"
       - latest
@@ -151,6 +175,20 @@ release:
   # `append` also keeps release-please's changelog body intact — goreleaser adds
   # its artifacts rather than overwriting the notes a human just reviewed.
   mode: append
+
+  # Ship the installer as a release asset so `get.drillproof.com` can serve
+  # `/releases/latest/download/install.sh` instead of a git ref.
+  #
+  # This is what keeps the installer honest without a human remembering to bump
+  # a pin. Serving a branch tip would put an unreviewed commit on a URL people
+  # pipe into a shell; serving a hardcoded tag goes stale, and a stale installer
+  # is not a cosmetic problem — the archive name it builds is coupled to
+  # `name_template` below, so a template change 404s for every user at once.
+  # Attaching it here means the installer served is always the one reviewed and
+  # tagged alongside the binaries it downloads.
+  extra_files:
+    - glob: scripts/install.sh
+
   footer: |
     ---
 

@@ -29,6 +29,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  packages: write # push the container image to GHCR
 
 jobs:
   release-please:
@@ -64,10 +65,21 @@ jobs:
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
+      # `.goreleaser.yaml` declares an `sboms:` block, and a real release does
+      # not skip that pipe the way the CI snapshot does. Without syft on PATH
+      # goreleaser fails with "executable file not found" — after release-please
+      # has already created the tag and the GitHub Release, so the release ends
+      # up published with a changelog and no binaries.
+      - uses: anchore/sbom-action/download-syft@v0
+
+      # GHCR, authenticated with the built-in token — no DOCKERHUB_* secrets to
+      # create, rotate, or leak. `github.actor` is whoever triggered the run;
+      # GHCR only checks that the token carries `packages: write` for this org.
       - uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: goreleaser/goreleaser-action@v6
         with:

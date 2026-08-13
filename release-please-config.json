@@ -5,7 +5,8 @@
   "packages": {
     ".": {
       "package-name": "drillproof-audit",
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false
     }
   },
   "changelog-sections": [
