@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.1](https://github.com/DrillProof/audit/compare/v1.2.0...v1.2.1) (2026-08-13)
+
+
+### Fixes
+
+* **release:** ship shell completions inside release archives ([e228d7f](https://github.com/DrillProof/audit/commit/e228d7f510475936c049e3c05e9168590bc40d3b))
+
+
+### Performance
+
+* **docker:** base image on distroless/static to drop QEMU emulation ([c22b227](https://github.com/DrillProof/audit/commit/c22b2277c08b71df2b31794582ae40ce4b9bd2d2))
+* **docker:** base image on distroless/static to drop QEMU emulation ([9a18409](https://github.com/DrillProof/audit/commit/9a184098f23e39714ff52f20e0076cfa7a9e61ff))
+
 ## [1.2.0](https://github.com/DrillProof/audit/compare/v1.1.0...v1.2.0) (2026-08-13)
 
 
