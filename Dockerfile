@@ -4,13 +4,23 @@
 #
 # The entrypoint includes the `audit` subcommand so the documented invocation
 # above works without repeating it.
-FROM alpine:3.21
-
-# ca-certificates is required to talk to AWS at all. No other packages: a tool
-# whose whole promise is that it only reads should have as little in the image
-# as possible.
-RUN apk add --no-cache ca-certificates \
-    && adduser -D -u 65532 drillproof
+#
+# distroless/static rather than alpine, for a reason that is about build time
+# rather than taste: `dockers_v2` builds linux/amd64 and linux/arm64, and on an
+# x86 CI runner the arm64 build runs every RUN instruction under QEMU. `apk add`
+# emulated is the single slowest thing in the image build. This base ships
+# ca-certificates and a uid-65532 `nonroot` user already, so there is nothing
+# left to RUN and nothing left to emulate — the arm64 build becomes a file copy.
+#
+# It is also strictly less to attack: no shell, no package manager, no apk
+# database, for a tool whose whole promise is that it only reads.
+#
+# The `:nonroot` tag is what makes this a drop-in replacement. It carries
+# `nonroot:x:65532:65532` in /etc/passwd — the same uid the previous
+# `adduser -D -u 65532 drillproof` created — so the USER line below is unchanged
+# and the container still runs as the same unprivileged uid. The binary is built
+# CGO_ENABLED=0, so a base with no libc is fine.
+FROM gcr.io/distroless/static:nonroot
 
 # goreleaser's `dockers_v2` builds one platform at a time and lays the context
 # out as <os>/<arch>/<binary> — the binary is NOT at the context root. buildx
