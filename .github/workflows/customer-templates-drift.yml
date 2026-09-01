@@ -1,0 +1,100 @@
+name: customer-templates drift
+
+# The permission set exists in exactly one place — internal/iam/iam.go — and is
+# published to customers in three formats from DrillProof/infra. This asserts
+# the published artifacts still match their generator, so a hand-edit or a
+# forgotten regeneration fails CI instead of shipping a template that grants
+# less than the scanner needs. A customer deploying a short template does not
+# see a permission gap; they see a check reported "not assessed" and read it as
+# our bug.
+#
+# It lives HERE rather than in DrillProof/infra because iam.go is the source of
+# truth and this repo already has the Go toolchain. The infra repo has neither,
+# and the version of this workflow that used to sit there could not run at all:
+# it expected `cli/go.mod` and an `infra/` subdirectory in one checkout, which
+# only existed while both repos shared a parent directory.
+#
+# It does NOT assert the third thing that must agree: the calls the scanner
+# actually makes. internal/iam/iam_test.go covers that
+# (TestPolicyCoversEverySDKCall, TestPolicyGrantsNothingUnused) and runs in ci.yml.
+
+on:
+  pull_request:
+    paths:
+      - "internal/iam/**"
+      - "cmd/init.go"
+      - ".github/workflows/customer-templates-drift.yml"
+  push:
+    branches: [master]
+    paths:
+      - "internal/iam/**"
+      - "cmd/init.go"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Published templates match iam.go
+    runs-on: ubuntu-latest
+    steps:
+      # Both repos are checked out as SIBLINGS, because
+      # infra/scripts/generate-customer-templates.sh resolves the CLI as
+      # `$(dirname "$INFRA")/cli` — the layout of the container directory these
+      # two repos are developed in. Reproducing it here means the script needs
+      # no CI-specific branch, and the same command works on a laptop.
+      - uses: actions/checkout@v4
+        with:
+          path: cli
+
+      # DrillProof/infra is private, so this needs a token with read access to
+      # it — the default GITHUB_TOKEN is scoped to this repository alone.
+      # A fine-grained PAT with Contents: read on DrillProof/infra, stored as
+      # INFRA_REPO_TOKEN, is the least-privilege option.
+      - uses: actions/checkout@v4
+        with:
+          repository: DrillProof/infra
+          path: infra
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      # Every published version, not just the newest: v1 must keep matching the
+      # generator for as long as customers have live stacks pointed at it.
+      - name: Regenerate every published version
+        working-directory: infra
+        run: |
+          shopt -s nullglob
+          versions=(customer-templates/v*/)
+          if [ ${#versions[@]} -eq 0 ]; then
+            echo "::error::no customer-templates/v*/ directories found — wrong checkout?"
+            exit 1
+          fi
+          for v in "${versions[@]}"; do
+            ./scripts/generate-customer-templates.sh "$(basename "$v")"
+          done
+
+      - name: Fail if the published templates no longer match their source
+        working-directory: infra
+        run: |
+          if ! git diff --exit-code -- customer-templates/; then
+            echo
+            echo "::error::Published customer templates do not match internal/iam."
+            echo
+            echo "If this PR changed the permission set, that is expected — but the"
+            echo "fix is NOT to overwrite the existing version. Customers have live"
+            echo "stacks pointed at the published URL, so cut a NEW version directory"
+            echo "in DrillProof/infra:"
+            echo
+            echo "    cp -r customer-templates/v1 customer-templates/v2"
+            echo "    ./scripts/generate-customer-templates.sh v2"
+            echo
+            echo "All three formats move together. If the permission set did NOT"
+            echo "change, someone hand-edited a published file — regenerate it."
+            exit 1
+          fi
+          echo "Published templates match iam.go."
