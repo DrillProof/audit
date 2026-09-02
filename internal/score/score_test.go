@@ -118,7 +118,11 @@ func TestNothingAssessableScoresZeroNotPerfect(t *testing.T) {
 	assert.Equal(t, 0, s.Assessed)
 }
 
-func TestScoreIsClampedAtZero(t *testing.T) {
+func TestRepeatedCoverageFailuresZeroTheResourceNotClampTheScore(t *testing.T) {
+	// Many coverage-fail findings piled onto one resource don't "clamp" a
+	// score below zero — the resource's own score is zeroed by the first
+	// coverage failure, and every additional finding just keeps adding to
+	// RawDeduction, which has no floor.
 	var findings []model.Finding
 	for i := 0; i < 20; i++ {
 		findings = append(findings, finding(model.CheckCoverage, model.StatusFail, stateRes))

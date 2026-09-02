@@ -87,7 +87,7 @@ func TestEmitGoldenFixtures(t *testing.T) {
 			f(vol, model.CheckCoverage, model.StatusSkipped, true),
 			f(vol, model.CheckImmutability, model.StatusSkipped, true),
 		}},
-		{Name: "clamped-at-zero", Findings: []model.Finding{
+		{Name: "every-resource-unbacked", Findings: []model.Finding{
 			f(etcd, model.CheckCoverage, model.StatusFail, false),
 			f(prodDB, model.CheckCoverage, model.StatusFail, false),
 			f(vol, model.CheckCoverage, model.StatusFail, false),
@@ -163,6 +163,21 @@ func TestEmitGoldenFixtures(t *testing.T) {
 			f(vol, model.CheckImmutability, model.StatusSkipped, false),
 			f(vol, model.CheckRedundancy, model.StatusSkipped, false),
 			f(vol, model.CheckRestoreTested, model.StatusSkipped, false),
+		}},
+
+		// resourceKey groups by (Type, Region, Display), not Display alone.
+		// Every other fixture happens to use one Display per resource, so
+		// none of them would catch resourceKey degrading to Display-only.
+		// Two "orders-pv" volumes, one in each region, with different
+		// findings, pin that they are scored and reported as two distinct
+		// resources rather than merged into one.
+		{Name: "same-display-different-region", Findings: []model.Finding{
+			f(vol, model.CheckCoverage, model.StatusOK, false),
+			f(vol, model.CheckFreshness, model.StatusOK, false),
+			f(vol, model.CheckImmutability, model.StatusOK, false),
+			f(vol, model.CheckRedundancy, model.StatusOK, false),
+			f(vol, model.CheckRestoreTested, model.StatusOK, false),
+			f(model.Resource{Display: "orders-pv", Name: "orders-pv", Type: model.TypeVolume, Region: "eu-west-1", Production: false}, model.CheckCoverage, model.StatusFail, false),
 		}},
 	}
 

@@ -172,8 +172,12 @@ A resource whose lock state we could not read is never reported as immutable.
 
 ## The Recoverability Score
 
-A single 0–100 integer plus a count of critical gaps. It starts at 100 and
-subtracts a documented weight per failing check:
+A single 0–100 integer plus a count of critical gaps. Each resource is scored on
+its own — a coverage failure zeroes it outright (unrecoverable, and its other
+checks have nothing left to assess); otherwise it starts at 100 and loses a
+documented weight per remaining failing check. The estate score is the
+criticality-weighted mean of those per-resource values, not a sum of
+deductions, so it does not saturate the way an absolute-deduction score would.
 
 | Failing check                       | Deduction |
 | ----------------------------------- | --------- |
@@ -185,20 +189,28 @@ subtracts a documented weight per failing check:
 | Redundancy                          | −6        |
 | Never test-restored                 | −5        |
 
-Clamped to 0. Deterministic — the same estate always scores the same, regardless
-of the order results arrive in. Every deduction is itemised by `--explain`, so
-you can check the arithmetic:
+Deterministic — the same estate always scores the same, regardless of the order
+results arrive in. Every deduction is itemised by `--explain`, so you can check
+the arithmetic:
 
 ```
 $ drillproof audit scan --explain
 ...
-How this score was calculated:
-  Starting score: 100
-    -25  etcd (prod-cluster) — no backup exists for critical resource (coverage)
-    -10  payments-db (RDS) — backups are deletable (no WORM/Object Lock) (immutability)
-    -5   payments-db (RDS) — never test-restored (restore-testing)
-  Total deduction: 40
-  Recoverability Score: 60/100
+Per-resource recoverability:
+    0/100  vol-01466b3d919b0c5c1
+   79/100  seekinvest-postgres   (counts 2x: critical resource)
+   92/100  finnhub-etl-volume
+
+Deductions:
+  -25  vol-01466b3d919b0c5c1 — no backup exists (coverage)
+  -10  seekinvest-postgres — backups are deletable (no WORM/Object Lock) (immutability)
+  -8   finnhub-etl-volume — most recent backup is beyond the failure threshold (freshness)
+  -6   seekinvest-postgres — backups exist in only one region (redundancy)
+  -5   seekinvest-postgres — never test-restored (restore-testing)
+
+Recoverability Score: 63/100  (weighted mean of 3 resource(s))
+Total raw deduction: 54
+Checks assessed: 11 — 0 blocked by permissions, 4 not applicable
 ```
 
 The weights live in `internal/score/score.go` as named constants with the
@@ -206,6 +218,9 @@ reasoning written out. If you disagree with a weight, you can see exactly what t
 change. **Untested-restore is weighted last on purpose** — not because it matters
 least, but because it is nearly universal, and penalising it heavily would flatten
 every score to zero and destroy the signal that makes the rest actionable.
+
+See `docs/how_it_works.md` §5 for the full arithmetic, including how
+`raw_deduction` (still an absolute sum) differs from the normalized score.
 
 If nothing could be assessed at all, the score is **0**, not 100. An account we
 cannot read is not an account with perfect backups.

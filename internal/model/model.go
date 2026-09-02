@@ -241,8 +241,10 @@ type Score struct {
 	// ResourceScores is the per-resource arithmetic behind Value, sorted
 	// worst-first then by resource.
 	ResourceScores []ResourceScore `json:"resource_scores"`
-	// MaxPenalty is the total deduction before clamping, so a catastrophic
-	// estate can be distinguished from a merely bad one in the report.
+	// RawDeduction is the absolute sum of every deduction, with no zeroing and
+	// no floor, so a catastrophic estate can be distinguished from a merely
+	// bad one in the report even though Value itself no longer can (Value is
+	// a weighted mean of per-resource scores, each floored at 0).
 	RawDeduction int `json:"raw_deduction"`
 	// Assessed is how many checks actually ran (skipped ones excluded).
 	Assessed int `json:"assessed"`

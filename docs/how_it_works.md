@@ -128,10 +128,18 @@ credibility cannot survive.
 
 ## 5. The score
 
-Each resource starts at 100 and subtracts a documented weight per failing check;
-the estate score is the criticality-weighted mean of those per-resource values:
+A coverage failure zeroes a resource outright — it is unrecoverable, and its
+other checks have nothing left to assess. Otherwise a resource starts at 100
+and loses a documented weight per remaining failing check; the estate score is
+the criticality-weighted mean of those per-resource values.
 
-| Failing check | Deduction | Constant |
+`raw_deduction` (in the JSON output and below) is a different number: the
+absolute sum of every deduction a resource would have taken with no zeroing
+and no floor, which is why the coverage-critical `+10` bonus below still shows
+up there even though it can never move a resource score that coverage already
+zeroed. It is the schedule that number follows:
+
+| Failing check (contributes to `raw_deduction`) | Deduction | Constant |
 | --- | --- | --- |
 | Coverage — no backup | −25 | `WeightCoverageFail` |
 | …and it is cluster state or a production DB | −10 more | `WeightCoverageCriticalBonus` |
