@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/DrillProof/audit/compare/v1.2.1...v2.0.0) (2026-09-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* Recoverability Scores rise for partially-protected estates. `score --fail-under N` gates set against v1 numbers may now pass where they previously failed — a gate that turned green deserves re-checking, not trust. Thresholds should be re-chosen against v2 numbers.
+
+### Features
+
+* score the estate as a weighted mean, not a sum of deductions ([08151d2](https://github.com/DrillProof/audit/commit/08151d20c17acdf99d83cda97247f98ee5b76bb8))
+
 ## [1.2.1](https://github.com/DrillProof/audit/compare/v1.2.0...v1.2.1) (2026-08-13)
 
 
