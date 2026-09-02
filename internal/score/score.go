@@ -56,8 +56,24 @@ const PerfectScore = 100
 
 // Compute derives the score from findings. Deterministic: same findings in any
 // order produce the same score, and penalties come back sorted heaviest-first.
+//
+// The estate score is a criticality-weighted mean of per-resource scores, NOT a
+// sum of absolute deductions. With absolute deductions the fourth unbacked
+// resource zeroed any account of any size, so a 96%-protected estate reported
+// the same 0 as one with nothing backed up. Penalties and RawDeduction are
+// unchanged and still carry the absolute arithmetic.
 func Compute(findings []model.Finding) model.Score {
 	s := model.Score{Value: PerfectScore}
+
+	// One accumulator per resource. `order` preserves first-seen order so the
+	// output is deterministic no matter what order regions returned in.
+	type acc struct {
+		resource     model.Resource
+		coverageFail bool
+		deduction    int
+	}
+	byResource := map[string]*acc{}
+	var order []string
 
 	for _, f := range findings {
 		if f.Status == model.StatusSkipped {
@@ -70,6 +86,14 @@ func Compute(findings []model.Finding) model.Score {
 			continue
 		}
 		s.Assessed++
+
+		key := resourceKey(f.Resource)
+		a := byResource[key]
+		if a == nil {
+			a = &acc{resource: f.Resource}
+			byResource[key] = a
+			order = append(order, key)
+		}
 
 		points, reason := weigh(f)
 		if points == 0 {
@@ -85,6 +109,15 @@ func Compute(findings []model.Finding) model.Score {
 			Reason:   reason,
 		})
 		s.RawDeduction += points
+
+		// Coverage is existence: failing it makes the resource unrecoverable,
+		// so it zeroes the resource rather than deducting from it. Every other
+		// gap is a quality gap against a backup that does exist.
+		if f.Check == model.CheckCoverage {
+			a.coverageFail = true
+		} else {
+			a.deduction += points
+		}
 	}
 
 	// Sort heaviest first, then by resource, so output is stable.
@@ -95,9 +128,46 @@ func Compute(findings []model.Finding) model.Score {
 		return s.Penalties[i].Resource < s.Penalties[j].Resource
 	})
 
-	s.Value = PerfectScore - s.RawDeduction
-	if s.Value < 0 {
-		s.Value = 0
+	weightedSum, totalWeight := 0, 0
+	for _, key := range order {
+		a := byResource[key]
+
+		value := PerfectScore - a.deduction
+		if a.coverageFail {
+			value = 0
+		}
+		if value < 0 {
+			value = 0
+		}
+
+		weight := 1
+		if isCritical(a.resource) {
+			weight = 2
+		}
+
+		s.ResourceScores = append(s.ResourceScores, model.ResourceScore{
+			Resource: a.resource.Display,
+			Score:    value,
+			Weight:   weight,
+		})
+		weightedSum += weight * value
+		totalWeight += weight
+	}
+
+	// Worst first, then by resource: the reader wants the resources dragging
+	// the score down, in the order they should be fixed.
+	sort.SliceStable(s.ResourceScores, func(i, j int) bool {
+		if s.ResourceScores[i].Score != s.ResourceScores[j].Score {
+			return s.ResourceScores[i].Score < s.ResourceScores[j].Score
+		}
+		return s.ResourceScores[i].Resource < s.ResourceScores[j].Resource
+	})
+
+	// Round-half-up in integer arithmetic. Float division here is how two
+	// implementations drift by a point, and a one-point disagreement between
+	// the CLI and the dashboard destroys the credibility of both numbers.
+	if totalWeight > 0 {
+		s.Value = (2*weightedSum + totalWeight) / (2 * totalWeight)
 	}
 
 	// Nothing was assessable — report 0 rather than a misleading 100. A user
@@ -107,6 +177,26 @@ func Compute(findings []model.Finding) model.Score {
 	}
 
 	return s
+}
+
+// resourceKey groups findings by the resource they describe.
+//
+// model.Resource cannot be a map key: Attrs is a map, so the struct is not
+// comparable.
+//
+// Deliberately NOT keyed on the ARN, even though this struct has one. The
+// TypeScript Resource has no `arn` — it has `externalId` ("ARN or
+// provider-native id"), populated by the app's own stableExternalId() — so
+// keying on identifiers would mean the two implementations grouping by
+// different values for the same resource. The golden fixtures carry neither
+// field, so that divergence would pass every parity test and only surface as
+// two different scores for one customer. Type, region and display are present
+// and identical on both sides.
+//
+// The NUL separator keeps two different resources from colliding through a
+// field value that happens to contain the delimiter.
+func resourceKey(r model.Resource) string {
+	return string(r.Type) + "\x00" + r.Region + "\x00" + r.Display
 }
 
 // weigh returns the deduction for one finding and the reason to show for it.
@@ -164,19 +254,36 @@ func isCritical(r model.Resource) bool {
 
 // Explain renders the score arithmetic as lines suitable for a report or
 // `--explain`. The point is that a skeptical engineer can check our maths.
+//
+// The value is a weighted mean of per-resource scores, so the per-resource
+// table is the arithmetic; the deduction list explains how each resource got
+// the score it did.
 func Explain(s model.Score) []string {
-	lines := []string{
-		fmt.Sprintf("Starting score: %d", PerfectScore),
+	lines := []string{"Per-resource recoverability:"}
+	for _, rs := range s.ResourceScores {
+		suffix := ""
+		if rs.Weight > 1 {
+			suffix = fmt.Sprintf("   (counts %dx: critical resource)", rs.Weight)
+		}
+		lines = append(lines, fmt.Sprintf("  %3d/100  %s%s", rs.Score, rs.Resource, suffix))
 	}
+	if len(s.ResourceScores) == 0 {
+		lines = append(lines, "  (nothing was assessable)")
+	}
+
+	lines = append(lines, "", "Deductions:")
 	for _, p := range s.Penalties {
 		lines = append(lines, fmt.Sprintf("  -%-3d %s — %s (%s)", p.Points, p.Resource, p.Reason, p.Check))
 	}
 	if len(s.Penalties) == 0 {
 		lines = append(lines, "  (no deductions)")
 	}
+
 	lines = append(lines,
-		fmt.Sprintf("Total deduction: %d", s.RawDeduction),
-		fmt.Sprintf("Recoverability Score: %d/100", s.Value),
+		"",
+		fmt.Sprintf("Recoverability Score: %d/100  (weighted mean of %d resource(s))",
+			s.Value, len(s.ResourceScores)),
+		fmt.Sprintf("Total raw deduction: %d", s.RawDeduction),
 		fmt.Sprintf("Checks assessed: %d — %d blocked by permissions, %d not applicable",
 			s.Assessed, s.Blocked, s.Moot),
 	)

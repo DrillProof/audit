@@ -167,8 +167,8 @@ func TestTableExplainShowsArithmetic(t *testing.T) {
 	out := buf.String()
 
 	assert.Contains(t, out, "How this score was calculated")
-	assert.Contains(t, out, "Starting score: 100")
-	assert.Contains(t, out, "Total deduction:")
+	assert.Contains(t, out, "Per-resource recoverability")
+	assert.Contains(t, out, "Total raw deduction:")
 }
 
 func TestTableHandlesEmptyEstate(t *testing.T) {

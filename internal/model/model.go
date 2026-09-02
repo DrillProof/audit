@@ -216,11 +216,31 @@ type Penalty struct {
 	Reason   string  `json:"reason"`
 }
 
+// ResourceScore is one resource's own recoverability, 0-100, plus how heavily
+// it counts toward the estate score.
+//
+// The estate score is a weighted mean of these, so without them the headline
+// number is unexplainable — `--explain` could print deductions but not the
+// arithmetic that produced the value.
+type ResourceScore struct {
+	// Resource is the display label, matching Penalty.Resource.
+	Resource string `json:"resource"`
+	// Score is 0-100 for this resource alone. A resource with no backup is 0:
+	// it is unrecoverable, and its other checks are moot.
+	Score int `json:"score"`
+	// Weight is 2 for critical resources (cluster state, production
+	// databases), 1 otherwise.
+	Weight int `json:"weight"`
+}
+
 // Score is the Recoverability Score and the arithmetic behind it.
 type Score struct {
 	Value        int       `json:"value"`         // 0-100
 	CriticalGaps int       `json:"critical_gaps"` // count of failing checks
 	Penalties    []Penalty `json:"penalties"`
+	// ResourceScores is the per-resource arithmetic behind Value, sorted
+	// worst-first then by resource.
+	ResourceScores []ResourceScore `json:"resource_scores"`
 	// MaxPenalty is the total deduction before clamping, so a catastrophic
 	// estate can be distinguished from a merely bad one in the report.
 	RawDeduction int `json:"raw_deduction"`
