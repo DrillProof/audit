@@ -128,7 +128,8 @@ credibility cannot survive.
 
 ## 5. The score
 
-Starts at 100, subtracts a documented weight per failing check, clamps at 0:
+Each resource starts at 100 and subtracts a documented weight per failing check;
+the estate score is the criticality-weighted mean of those per-resource values:
 
 | Failing check | Deduction | Constant |
 | --- | --- | --- |
@@ -145,16 +146,21 @@ All in `internal/score/score.go`, with the reasoning written beside them.
 `--explain` prints the arithmetic so a skeptic can check it:
 
 ```
-How this score was calculated:
-  Starting score: 100
-    -25  vol-01466b3d919b0c5c1 (EBS) — no backup exists (coverage)
-    -10  seekinvest-postgres (RDS) — backups are deletable (no WORM/Object Lock) (immutability)
-    -8   finnhub-etl-volume (EBS) — most recent backup is beyond the failure threshold (freshness)
-    -6   seekinvest-postgres (RDS) — backups exist in only one region (redundancy)
-    -5   seekinvest-postgres (RDS) — never test-restored (restore-testing)
-  Total deduction: 150
-  Recoverability Score: 0/100
-  Checks assessed: 14 — 0 blocked by permissions, 16 not applicable
+Per-resource recoverability:
+    0/100  vol-01466b3d919b0c5c1
+   79/100  seekinvest-postgres   (counts 2x: critical resource)
+   92/100  finnhub-etl-volume
+
+Deductions:
+  -25  vol-01466b3d919b0c5c1 — no backup exists (coverage)
+  -10  seekinvest-postgres — backups are deletable (no WORM/Object Lock) (immutability)
+  -8   finnhub-etl-volume — most recent backup is beyond the failure threshold (freshness)
+  -6   seekinvest-postgres — backups exist in only one region (redundancy)
+  -5   seekinvest-postgres — never test-restored (restore-testing)
+
+Recoverability Score: 63/100  (weighted mean of 3 resource(s))
+Total raw deduction: 54
+Checks assessed: 11 — 0 blocked by permissions, 4 not applicable
 ```
 
 Two properties worth knowing:
@@ -165,9 +171,25 @@ Two properties worth knowing:
 - **Nothing assessable scores 0, not 100.** An account we cannot read is not an
   account with perfect backups.
 
-Note that a badly-protected estate saturates: total deduction was 150 against a
-ceiling of 100, so the score bottoms out. `raw_deduction` in the JSON output
-preserves the true depth.
+The score is a **criticality-weighted mean of per-resource scores**, not a sum of
+deductions, so it does not saturate: an estate of 100 resources with 4
+unprotected scores 91, and one with 50 unprotected scores 48. Before v2.0.0 the
+deductions were absolute and the fourth unprotected resource zeroed any account
+of any size — a 96%-protected estate reported the same 0 as an estate with
+nothing backed up.
+
+Per resource: a coverage failure scores it 0 (it is unrecoverable, and its other
+checks have nothing to assess); otherwise it starts at 100 and loses its quality
+penalties. Resources whose every check was skipped are excluded from the mean —
+never scored 0, which would report a permission gap as a recoverability gap.
+`raw_deduction` in the JSON output still preserves the absolute depth, which the
+normalized value deliberately no longer expresses.
+
+This means a v1 score and a v2 score for the same estate are not the same
+number and must not be compared: because v2 no longer saturates, a `--fail-under`
+gate calibrated against v1's behavior may now pass where it used to fail. Recheck
+your gate's threshold after upgrading rather than assuming the old value still
+means what it did.
 
 ---
 
