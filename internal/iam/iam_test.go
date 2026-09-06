@@ -14,12 +14,13 @@ import (
 
 // servicePrefix maps each AWS interface to its IAM service prefix.
 var servicePrefix = map[string]string{
-	"STSAPI":    "sts",
-	"EC2API":    "ec2",
-	"RDSAPI":    "rds",
-	"BackupAPI": "backup",
-	"EKSAPI":    "eks",
-	"S3API":     "s3",
+	"STSAPI":      "sts",
+	"EC2API":      "ec2",
+	"RDSAPI":      "rds",
+	"BackupAPI":   "backup",
+	"EKSAPI":      "eks",
+	"S3API":       "s3",
+	"DynamoDBAPI": "dynamodb",
 }
 
 // iamActionExceptions covers the places where the IAM action name differs from
@@ -29,16 +30,18 @@ var servicePrefix = map[string]string{
 // policy that does not actually authorise the tool.
 var iamActionExceptions = map[string]string{
 	"s3:GetObjectLockConfiguration": "s3:GetBucketObjectLockConfiguration",
+	"s3:ListBuckets":                "s3:ListAllMyBuckets",
 }
 
 func interfaceTypes() map[string]reflect.Type {
 	return map[string]reflect.Type{
-		"STSAPI":    reflect.TypeOf((*awsx.STSAPI)(nil)).Elem(),
-		"EC2API":    reflect.TypeOf((*awsx.EC2API)(nil)).Elem(),
-		"RDSAPI":    reflect.TypeOf((*awsx.RDSAPI)(nil)).Elem(),
-		"BackupAPI": reflect.TypeOf((*awsx.BackupAPI)(nil)).Elem(),
-		"EKSAPI":    reflect.TypeOf((*awsx.EKSAPI)(nil)).Elem(),
-		"S3API":     reflect.TypeOf((*awsx.S3API)(nil)).Elem(),
+		"STSAPI":      reflect.TypeOf((*awsx.STSAPI)(nil)).Elem(),
+		"EC2API":      reflect.TypeOf((*awsx.EC2API)(nil)).Elem(),
+		"RDSAPI":      reflect.TypeOf((*awsx.RDSAPI)(nil)).Elem(),
+		"BackupAPI":   reflect.TypeOf((*awsx.BackupAPI)(nil)).Elem(),
+		"EKSAPI":      reflect.TypeOf((*awsx.EKSAPI)(nil)).Elem(),
+		"S3API":       reflect.TypeOf((*awsx.S3API)(nil)).Elem(),
+		"DynamoDBAPI": reflect.TypeOf((*awsx.DynamoDBAPI)(nil)).Elem(),
 	}
 }
 
@@ -83,6 +86,32 @@ func TestPolicyGrantsNothingUnused(t *testing.T) {
 	for _, action := range AllActions() {
 		assert.True(t, required[action],
 			"the policy grants %s but no interface method needs it — remove it or wire up the call", action)
+	}
+}
+
+func TestPolicyCoversTheNewResourceTypes(t *testing.T) {
+	actions := map[string]bool{}
+	for _, a := range AllActions() {
+		actions[a] = true
+	}
+	for _, want := range []string{
+		"s3:ListAllMyBuckets", "s3:GetBucketLocation", "s3:GetBucketVersioning",
+		"s3:GetBucketObjectLockConfiguration", "s3:GetBucketReplication", "s3:GetBucketTagging",
+		"dynamodb:ListTables", "dynamodb:DescribeTable",
+		"dynamodb:DescribeContinuousBackups", "dynamodb:ListTagsOfResource",
+	} {
+		assert.True(t, actions[want], "policy is missing %s", want)
+	}
+}
+
+func TestPolicyGrantsNothingTheScannerDoesNotCall(t *testing.T) {
+	// The other half of the contract. A policy that over-grants is a policy a
+	// security reviewer is right to reject, and it undermines the least-
+	// privilege claim the product makes.
+	required := requiredActions(t)
+	for _, granted := range AllActions() {
+		assert.True(t, required[granted],
+			"policy grants %s but no interface method calls it", granted)
 	}
 }
 
