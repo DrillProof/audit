@@ -76,6 +76,9 @@ func Coverage(r model.Resource, s *model.BackupState, _ Config) model.Finding {
 	if r.Type == model.TypeBucket {
 		return coverageBucket(r, s)
 	}
+	if r.Type == model.TypeTable {
+		return coverageTable(r, s)
+	}
 
 	f := model.Finding{Resource: r, Check: model.CheckCoverage}
 	if s.RecoveryPoints > 0 {
@@ -107,7 +110,16 @@ func Freshness(r model.Resource, s *model.BackupState, cfg Config) model.Finding
 	if reason, ok := s.Unassessed[model.CheckFreshness]; ok {
 		return blocked(r, model.CheckFreshness, reason)
 	}
+	if r.Type == model.TypeTable {
+		return freshnessTable(r, s, cfg)
+	}
+	return freshnessFromRecoveryPoints(r, s, cfg)
+}
 
+// freshnessFromRecoveryPoints is the shared age check driven by AWS Backup
+// recovery points. Both the default Freshness path and the DynamoDB
+// backup-plan path call it, so there is one implementation to keep correct.
+func freshnessFromRecoveryPoints(r model.Resource, s *model.BackupState, cfg Config) model.Finding {
 	f := model.Finding{Resource: r, Check: model.CheckFreshness}
 
 	// No backup at all is Coverage's finding to report, not Freshness's.
@@ -141,7 +153,15 @@ func Immutability(r model.Resource, s *model.BackupState, _ Config) model.Findin
 	if r.Type == model.TypeBucket {
 		return immutabilityBucket(r, s)
 	}
+	if r.Type == model.TypeTable {
+		return immutabilityTable(r, s)
+	}
+	return immutabilityFromVaults(r, s)
+}
 
+// immutabilityFromVaults is the shared Vault Lock check. Both the default
+// Immutability path and the DynamoDB backup-plan path call it.
+func immutabilityFromVaults(r model.Resource, s *model.BackupState) model.Finding {
 	f := model.Finding{Resource: r, Check: model.CheckImmutability}
 	switch s.Immutable {
 	case model.Yes:
@@ -170,7 +190,16 @@ func Redundancy(r model.Resource, s *model.BackupState, _ Config) model.Finding 
 	if r.Type == model.TypeBucket {
 		return redundancyBucket(r, s)
 	}
+	if r.Type == model.TypeTable {
+		return redundancyTable(r, s)
+	}
+	return redundancyFromVaults(r, s)
+}
 
+// redundancyFromVaults is the shared cross-region check driven by AWS Backup
+// recovery points. Both the default Redundancy path and the DynamoDB
+// backup-plan path call it.
+func redundancyFromVaults(r model.Resource, s *model.BackupState) model.Finding {
 	f := model.Finding{Resource: r, Check: model.CheckRedundancy}
 	if s.RecoveryPoints == 0 {
 		return moot(r, model.CheckRedundancy, "no backup to replicate")
