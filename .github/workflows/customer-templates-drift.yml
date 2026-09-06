@@ -39,12 +39,27 @@ jobs:
     name: Published templates match iam.go
     runs-on: ubuntu-latest
     steps:
+      # A guard that cannot run must SAY it did not run. Silently passing a
+      # check that never executed is the same lie this product exists to
+      # refuse: "not assessed" is not "assessed and fine". Until
+      # INFRA_REPO_TOKEN is provisioned, this job is skipped with a visible
+      # warning rather than a green tick.
+      - id: preflight
+        run: |
+          if [ -z "${{ secrets.INFRA_REPO_TOKEN }}" ]; then
+            echo "::warning title=Template drift NOT verified::INFRA_REPO_TOKEN is not set, so DrillProof/infra could not be read. The published customer templates were NOT checked against internal/iam. Mint a fine-grained PAT with Contents:read on DrillProof/infra and store it as INFRA_REPO_TOKEN to enable this guard."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # Both repos are checked out as SIBLINGS, because
       # infra/scripts/generate-customer-templates.sh resolves the CLI as
       # `$(dirname "$INFRA")/cli` — the layout of the container directory these
       # two repos are developed in. Reproducing it here means the script needs
       # no CI-specific branch, and the same command works on a laptop.
       - uses: actions/checkout@v4
+        if: steps.preflight.outputs.enabled == 'true'
         with:
           path: cli
 
@@ -53,19 +68,37 @@ jobs:
       # A fine-grained PAT with Contents: read on DrillProof/infra, stored as
       # INFRA_REPO_TOKEN, is the least-privilege option.
       - uses: actions/checkout@v4
+        if: steps.preflight.outputs.enabled == 'true'
         with:
           repository: DrillProof/infra
           path: infra
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
 
       - uses: actions/setup-go@v5
+        if: steps.preflight.outputs.enabled == 'true'
         with:
           go-version-file: cli/go.mod
           cache-dependency-path: cli/go.sum
 
-      # Every published version, not just the newest: v1 must keep matching the
-      # generator for as long as customers have live stacks pointed at it.
-      - name: Regenerate every published version
+      # ONLY the newest version, deliberately.
+      #
+      # The original loop regenerated every v*/ from the current generator, which
+      # made changing the permission set impossible: the moment iam.go gains an
+      # action, v1 regenerates differently from published v1 and the job fails —
+      # and cutting v2 does not help, because v1 still regenerates differently.
+      # The job's own error message told you to cut a new version, which could
+      # never clear the failure it was reporting.
+      #
+      # Older versions are FROZEN AT THE PERMISSION SET THEY SHIPPED WITH. That
+      # is the entire point of versioning them: customers hold live stacks
+      # pointed at v1, and v1 must keep granting exactly what it granted the day
+      # they deployed it. Regenerating it is not a correctness check, it is a
+      # request to rewrite history.
+      #
+      # What this therefore guards is the live version: that whoever changed
+      # iam.go also cut and generated the new version directory.
+      - name: Regenerate the current published version
+        if: steps.preflight.outputs.enabled == 'true'
         working-directory: infra
         run: |
           shopt -s nullglob
@@ -74,11 +107,14 @@ jobs:
             echo "::error::no customer-templates/v*/ directories found — wrong checkout?"
             exit 1
           fi
-          for v in "${versions[@]}"; do
-            ./scripts/generate-customer-templates.sh "$(basename "$v")"
-          done
+          # Highest vN wins; version sort so v10 beats v9.
+          latest="$(printf '%s\n' "${versions[@]}" | xargs -n1 basename | sort -V | tail -1)"
+          echo "Current published version: $latest"
+          echo "Frozen (not regenerated): $(printf '%s\n' "${versions[@]}" | xargs -n1 basename | sort -V | sed '$d' | tr '\n' ' ')"
+          ./scripts/generate-customer-templates.sh "$latest"
 
       - name: Fail if the published templates no longer match their source
+        if: steps.preflight.outputs.enabled == 'true'
         working-directory: infra
         run: |
           if ! git diff --exit-code -- customer-templates/; then
