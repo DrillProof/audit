@@ -73,6 +73,9 @@ func Coverage(r model.Resource, s *model.BackupState, _ Config) model.Finding {
 	if reason, ok := s.Unassessed[model.CheckCoverage]; ok {
 		return blocked(r, model.CheckCoverage, reason)
 	}
+	if r.Type == model.TypeBucket {
+		return coverageBucket(r, s)
+	}
 
 	f := model.Finding{Resource: r, Check: model.CheckCoverage}
 	if s.RecoveryPoints > 0 {
@@ -98,6 +101,9 @@ func Coverage(r model.Resource, s *model.BackupState, _ Config) model.Finding {
 
 // Freshness — how old is the most recent successful backup?
 func Freshness(r model.Resource, s *model.BackupState, cfg Config) model.Finding {
+	if r.Type == model.TypeBucket {
+		return moot(r, model.CheckFreshness, "live bucket — no backup age to measure")
+	}
 	if reason, ok := s.Unassessed[model.CheckFreshness]; ok {
 		return blocked(r, model.CheckFreshness, reason)
 	}
@@ -132,6 +138,9 @@ func Immutability(r model.Resource, s *model.BackupState, _ Config) model.Findin
 	if reason, ok := s.Unassessed[model.CheckImmutability]; ok {
 		return blocked(r, model.CheckImmutability, reason)
 	}
+	if r.Type == model.TypeBucket {
+		return immutabilityBucket(r, s)
+	}
 
 	f := model.Finding{Resource: r, Check: model.CheckImmutability}
 	switch s.Immutable {
@@ -157,6 +166,9 @@ func Immutability(r model.Resource, s *model.BackupState, _ Config) model.Findin
 func Redundancy(r model.Resource, s *model.BackupState, _ Config) model.Finding {
 	if reason, ok := s.Unassessed[model.CheckRedundancy]; ok {
 		return blocked(r, model.CheckRedundancy, reason)
+	}
+	if r.Type == model.TypeBucket {
+		return redundancyBucket(r, s)
 	}
 
 	f := model.Finding{Resource: r, Check: model.CheckRedundancy}
@@ -184,6 +196,9 @@ func Redundancy(r model.Resource, s *model.BackupState, _ Config) model.Finding 
 // distinguish three things: a real restore happened, a restore-testing plan
 // exists but has not run yet, and nothing has ever been tried.
 func RestoreTested(r model.Resource, s *model.BackupState, _ Config) model.Finding {
+	if r.Type == model.TypeBucket {
+		return moot(r, model.CheckRestoreTested, "restore verification for buckets is not implemented in this release")
+	}
 	if reason, ok := s.Unassessed[model.CheckRestoreTested]; ok {
 		return blocked(r, model.CheckRestoreTested, reason)
 	}
