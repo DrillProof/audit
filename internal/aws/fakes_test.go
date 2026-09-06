@@ -7,6 +7,8 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/backup"
 	backuptypes "github.com/aws/aws-sdk-go-v2/service/backup/types"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -14,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
 )
@@ -203,14 +206,126 @@ func (f *fakeEKS) DescribeCluster(_ context.Context, in *eks.DescribeClusterInpu
 
 // ----------------------------------------------------------------- fake S3
 
-type fakeS3 struct{}
+type fakeS3 struct {
+	buckets     []string
+	locations   map[string]string // bucket -> LocationConstraint value
+	versioning  map[string]s3.GetBucketVersioningOutput
+	replication map[string]s3.GetBucketReplicationOutput
+	objectLock  map[string]s3.GetObjectLockConfigurationOutput
+	tags        map[string][]s3types.Tag
 
-func (f *fakeS3) GetObjectLockConfiguration(context.Context, *s3.GetObjectLockConfigurationInput, ...func(*s3.Options)) (*s3.GetObjectLockConfigurationOutput, error) {
-	return nil, &stubAPIErr{code: "ObjectLockConfigurationNotFoundError"}
+	listErr        error
+	versioningErr  error
+	replicationErr error
+	objectLockErr  error
+	locationErr    error
 }
 
-func (f *fakeS3) GetBucketLocation(context.Context, *s3.GetBucketLocationInput, ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
-	return &s3.GetBucketLocationOutput{}, nil
+func (f *fakeS3) ListBuckets(context.Context, *s3.ListBucketsInput, ...func(*s3.Options)) (*s3.ListBucketsOutput, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	out := &s3.ListBucketsOutput{}
+	for _, b := range f.buckets {
+		out.Buckets = append(out.Buckets, s3types.Bucket{Name: awssdk.String(b)})
+	}
+	return out, nil
+}
+
+func (f *fakeS3) GetBucketLocation(_ context.Context, in *s3.GetBucketLocationInput, _ ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
+	if f.locationErr != nil {
+		return nil, f.locationErr
+	}
+	return &s3.GetBucketLocationOutput{
+		LocationConstraint: s3types.BucketLocationConstraint(f.locations[awssdk.ToString(in.Bucket)]),
+	}, nil
+}
+
+func (f *fakeS3) GetBucketVersioning(_ context.Context, in *s3.GetBucketVersioningInput, _ ...func(*s3.Options)) (*s3.GetBucketVersioningOutput, error) {
+	if f.versioningErr != nil {
+		return nil, f.versioningErr
+	}
+	out := f.versioning[awssdk.ToString(in.Bucket)]
+	return &out, nil
+}
+
+func (f *fakeS3) GetBucketReplication(_ context.Context, in *s3.GetBucketReplicationInput, _ ...func(*s3.Options)) (*s3.GetBucketReplicationOutput, error) {
+	if f.replicationErr != nil {
+		return nil, f.replicationErr
+	}
+	out, ok := f.replication[awssdk.ToString(in.Bucket)]
+	if !ok {
+		return nil, &stubAPIErr{code: "ReplicationConfigurationNotFoundError"}
+	}
+	return &out, nil
+}
+
+func (f *fakeS3) GetObjectLockConfiguration(_ context.Context, in *s3.GetObjectLockConfigurationInput, _ ...func(*s3.Options)) (*s3.GetObjectLockConfigurationOutput, error) {
+	if f.objectLockErr != nil {
+		return nil, f.objectLockErr
+	}
+	out, ok := f.objectLock[awssdk.ToString(in.Bucket)]
+	if !ok {
+		return nil, &stubAPIErr{code: "ObjectLockConfigurationNotFoundError"}
+	}
+	return &out, nil
+}
+
+func (f *fakeS3) GetBucketTagging(_ context.Context, in *s3.GetBucketTaggingInput, _ ...func(*s3.Options)) (*s3.GetBucketTaggingOutput, error) {
+	tags, ok := f.tags[awssdk.ToString(in.Bucket)]
+	if !ok {
+		return nil, &stubAPIErr{code: "NoSuchTagSet"}
+	}
+	return &s3.GetBucketTaggingOutput{TagSet: tags}, nil
+}
+
+// ------------------------------------------------------------ fake DynamoDB
+
+type fakeDynamoDB struct {
+	tables    []string
+	described map[string]dynamodbtypes.TableDescription
+	pitr      map[string]dynamodbtypes.PointInTimeRecoveryStatus
+	tags      map[string][]dynamodbtypes.Tag
+
+	listErr     error
+	describeErr error
+	pitrErr     error
+}
+
+func (f *fakeDynamoDB) ListTables(context.Context, *dynamodb.ListTablesInput, ...func(*dynamodb.Options)) (*dynamodb.ListTablesOutput, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return &dynamodb.ListTablesOutput{TableNames: f.tables}, nil
+}
+
+func (f *fakeDynamoDB) DescribeTable(_ context.Context, in *dynamodb.DescribeTableInput, _ ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error) {
+	if f.describeErr != nil {
+		return nil, f.describeErr
+	}
+	desc := f.described[awssdk.ToString(in.TableName)]
+	return &dynamodb.DescribeTableOutput{Table: &desc}, nil
+}
+
+func (f *fakeDynamoDB) DescribeContinuousBackups(_ context.Context, in *dynamodb.DescribeContinuousBackupsInput, _ ...func(*dynamodb.Options)) (*dynamodb.DescribeContinuousBackupsOutput, error) {
+	if f.pitrErr != nil {
+		return nil, f.pitrErr
+	}
+	status, ok := f.pitr[awssdk.ToString(in.TableName)]
+	if !ok {
+		status = dynamodbtypes.PointInTimeRecoveryStatusDisabled
+	}
+	return &dynamodb.DescribeContinuousBackupsOutput{
+		ContinuousBackupsDescription: &dynamodbtypes.ContinuousBackupsDescription{
+			PointInTimeRecoveryDescription: &dynamodbtypes.PointInTimeRecoveryDescription{
+				PointInTimeRecoveryStatus: status,
+			},
+		},
+	}, nil
+}
+
+func (f *fakeDynamoDB) ListTagsOfResource(_ context.Context, in *dynamodb.ListTagsOfResourceInput, _ ...func(*dynamodb.Options)) (*dynamodb.ListTagsOfResourceOutput, error) {
+	return &dynamodb.ListTagsOfResourceOutput{Tags: f.tags[awssdk.ToString(in.ResourceArn)]}, nil
 }
 
 // ----------------------------------------------------------- fake Provider
@@ -231,12 +346,13 @@ func (f *fakeProvider) For(region string) Clients {
 	// An empty-but-valid region, so scanning an unexpected region is inert
 	// rather than a nil-pointer panic.
 	return Clients{
-		Region: region,
-		EC2:    &fakeEC2{},
-		RDS:    &fakeRDS{},
-		Backup: &fakeBackup{},
-		EKS:    &fakeEKS{},
-		S3:     &fakeS3{},
+		Region:   region,
+		EC2:      &fakeEC2{},
+		RDS:      &fakeRDS{},
+		Backup:   &fakeBackup{},
+		EKS:      &fakeEKS{},
+		S3:       &fakeS3{},
+		DynamoDB: &fakeDynamoDB{},
 	}
 }
 
