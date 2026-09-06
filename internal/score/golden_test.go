@@ -36,6 +36,9 @@ func TestEmitGoldenFixtures(t *testing.T) {
 	devDB := res("dev-db", model.TypeDatabase, false)
 	etcd := res("etcd (prod-cluster)", model.TypeK8sState, false)
 	cluster := res("aurora-main", model.TypeDBCluster, true)
+	prodBucket := res("customer-uploads", model.TypeBucket, true)
+	devBucket := res("build-artifacts", model.TypeBucket, false)
+	prodTable := res("sessions", model.TypeTable, true)
 
 	f := func(r model.Resource, c model.CheckID, s model.Status, accessGap bool) model.Finding {
 		return model.Finding{Resource: r, Check: c, Status: s, SkipIsAccessGap: accessGap}
@@ -178,6 +181,42 @@ func TestEmitGoldenFixtures(t *testing.T) {
 			f(vol, model.CheckRedundancy, model.StatusOK, false),
 			f(vol, model.CheckRestoreTested, model.StatusOK, false),
 			f(model.Resource{Display: "orders-pv", Name: "orders-pv", Type: model.TypeVolume, Region: "eu-west-1", Production: false}, model.CheckCoverage, model.StatusFail, false),
+		}},
+
+		{Name: "bucket-na-checks-deduct-nothing", Findings: []model.Finding{
+			f(devBucket, model.CheckCoverage, model.StatusOK, false),
+			f(devBucket, model.CheckImmutability, model.StatusOK, false),
+			f(devBucket, model.CheckRedundancy, model.StatusOK, false),
+			f(devBucket, model.CheckFreshness, model.StatusSkipped, false),
+			f(devBucket, model.CheckRestoreTested, model.StatusSkipped, false),
+		}},
+		{Name: "coverage-fail-prod-bucket", Findings: []model.Finding{
+			f(prodBucket, model.CheckCoverage, model.StatusFail, false),
+		}},
+		{Name: "coverage-fail-dev-bucket-no-bonus", Findings: []model.Finding{
+			f(devBucket, model.CheckCoverage, model.StatusFail, false),
+		}},
+		{Name: "coverage-fail-prod-table", Findings: []model.Finding{
+			f(prodTable, model.CheckCoverage, model.StatusFail, false),
+		}},
+		{Name: "bucket-partial-tier-warn-and-redundancy-fail", Findings: []model.Finding{
+			f(devBucket, model.CheckCoverage, model.StatusWarn, false),
+			f(devBucket, model.CheckImmutability, model.StatusFail, false),
+			f(devBucket, model.CheckRedundancy, model.StatusFail, false),
+			f(devBucket, model.CheckFreshness, model.StatusSkipped, false),
+			f(devBucket, model.CheckRestoreTested, model.StatusSkipped, false),
+		}},
+		{Name: "table-pitr-only-redundancy-fail", Findings: []model.Finding{
+			f(prodTable, model.CheckCoverage, model.StatusOK, false),
+			f(prodTable, model.CheckFreshness, model.StatusSkipped, false),
+			f(prodTable, model.CheckImmutability, model.StatusSkipped, false),
+			f(prodTable, model.CheckRedundancy, model.StatusFail, false),
+			f(prodTable, model.CheckRestoreTested, model.StatusFail, false),
+		}},
+		{Name: "new-permission-denied-is-blocked-never-fail", Findings: []model.Finding{
+			f(devBucket, model.CheckCoverage, model.StatusSkipped, true),
+			f(devBucket, model.CheckImmutability, model.StatusSkipped, true),
+			f(devBucket, model.CheckRedundancy, model.StatusSkipped, true),
 		}},
 	}
 
