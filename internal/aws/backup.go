@@ -139,9 +139,32 @@ func GatherBackupState(
 	res model.Resource,
 	idx *VaultIndex,
 ) *model.BackupState {
-	state := model.NewBackupState()
-	state.Immutable = model.Unknown
-	state.CrossRegion = model.Unknown
+	return GatherBackupStateInto(ctx, p, res, idx, model.NewBackupState())
+}
+
+// GatherBackupStateInto merges AWS Backup evidence into a state that discovery
+// may already have populated.
+//
+// Buckets and tables arrive with their S3/DynamoDB posture already read (see
+// Buckets and Tables), and resetting Immutable/CrossRegion to Unknown — or
+// clearing state.S3/state.Dynamo — here would silently discard that work. That
+// reads downstream as "configuration not read" on every single bucket, even
+// though discovery genuinely read it. So this only ever tightens Unknown into
+// a real answer; it never overwrites an answer discovery already gave.
+func GatherBackupStateInto(
+	ctx context.Context,
+	p Provider,
+	res model.Resource,
+	idx *VaultIndex,
+	state *model.BackupState,
+) *model.BackupState {
+	// The old body of this function unconditionally reset Immutable/CrossRegion
+	// to Unknown here. Unknown is already the zero value on a fresh state, so
+	// that was a no-op for GatherBackupState's own callers — but for a state
+	// discovery already populated (S3 Object Lock, replication) it would have
+	// silently stomped a real Yes/No back to Unknown. Deliberately not done:
+	// both fields are left exactly as the caller passed them in, and only
+	// tightened below when this function itself finds evidence.
 	state.RestoreTestingConfigured = idx.RestoreTestingPlans > 0
 
 	// --- AWS Backup recovery points, searched across every visible vault ---

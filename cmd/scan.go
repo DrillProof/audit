@@ -75,10 +75,11 @@ func performScan(cmd *cobra.Command) (*model.Result, error) {
 
 	logf("scanning (regions=%v)", flags.Regions)
 	result, err := awsx.Scan(ctx, provider, awsx.ScanOptions{
-		Regions: flags.Regions,
-		Checks:  checksConfig(),
-		Version: version,
-		Cluster: cluster,
+		Regions:         flags.Regions,
+		Checks:          checksConfig(),
+		Version:         version,
+		Cluster:         cluster,
+		BucketAllowList: flags.BucketAllowList,
 	})
 	if err != nil {
 		return nil, err

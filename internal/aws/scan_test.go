@@ -7,8 +7,11 @@ import (
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	backuptypes "github.com/aws/aws-sdk-go-v2/service/backup/types"
+	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -64,8 +67,9 @@ func estate() *fakeProvider {
 				},
 			},
 		},
-		EKS: &fakeEKS{clusters: []string{"prod-cluster"}},
-		S3:  &fakeS3{},
+		EKS:      &fakeEKS{clusters: []string{"prod-cluster"}},
+		S3:       &fakeS3{},
+		DynamoDB: &fakeDynamoDB{},
 	}
 
 	// The DR region holds a copy of the volume's recovery point, which is what
@@ -86,8 +90,9 @@ func estate() *fakeProvider {
 				},
 			},
 		},
-		EKS: &fakeEKS{},
-		S3:  &fakeS3{},
+		EKS:      &fakeEKS{},
+		S3:       &fakeS3{},
+		DynamoDB: &fakeDynamoDB{},
 	}
 
 	return &fakeProvider{
@@ -434,6 +439,86 @@ func TestCountUntested(t *testing.T) {
 	result, err := Scan(context.Background(), estate(), scanOpts())
 	require.NoError(t, err)
 	assert.Positive(t, CountUntested(result))
+}
+
+func TestScanIncludesBucketsAndTables(t *testing.T) {
+	p := &fakeProvider{
+		base: "us-east-1",
+		sts:  &fakeSTS{account: "123456789012"},
+		perRegion: map[string]Clients{
+			"us-east-1": {
+				Region: "us-east-1",
+				EC2:    &fakeEC2{regions: []string{"us-east-1"}},
+				RDS:    &fakeRDS{},
+				Backup: &fakeBackup{},
+				EKS:    &fakeEKS{},
+				S3: &fakeS3{
+					buckets:   []string{"uploads"},
+					locations: map[string]string{"uploads": ""},
+				},
+				DynamoDB: &fakeDynamoDB{
+					tables: []string{"sessions"},
+					described: map[string]dynamodbtypes.TableDescription{
+						"sessions": {TableArn: awssdk.String("arn:aws:dynamodb:us-east-1:1:table/sessions")},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := Scan(context.Background(), p, ScanOptions{
+		Regions: []string{"us-east-1"},
+		Checks:  checks.DefaultConfig(),
+	})
+	require.NoError(t, err)
+
+	types := map[model.ResourceType]bool{}
+	for _, row := range result.Rows {
+		types[row.Resource.Type] = true
+	}
+	assert.True(t, types[model.TypeBucket], "buckets must appear in the inventory")
+	assert.True(t, types[model.TypeTable], "tables must appear in the inventory")
+}
+
+func TestScanPreservesBucketProtectionState(t *testing.T) {
+	// The regression this guards: GatherBackupState builds a fresh state and
+	// would discard the S3 posture discovery already collected, leaving every
+	// bucket reporting "bucket configuration not read".
+	p := &fakeProvider{
+		base: "us-east-1",
+		sts:  &fakeSTS{account: "123456789012"},
+		perRegion: map[string]Clients{
+			"us-east-1": {
+				Region: "us-east-1",
+				EC2:    &fakeEC2{regions: []string{"us-east-1"}},
+				RDS:    &fakeRDS{}, Backup: &fakeBackup{}, EKS: &fakeEKS{},
+				DynamoDB: &fakeDynamoDB{},
+				S3: &fakeS3{
+					buckets:   []string{"uploads"},
+					locations: map[string]string{"uploads": ""},
+					versioning: map[string]s3.GetBucketVersioningOutput{
+						"uploads": {Status: s3types.BucketVersioningStatusEnabled, MFADelete: s3types.MFADeleteStatusEnabled},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := Scan(context.Background(), p, ScanOptions{
+		Regions: []string{"us-east-1"},
+		Checks:  checks.DefaultConfig(),
+	})
+	require.NoError(t, err)
+
+	for _, row := range result.Rows {
+		if row.Resource.Type != model.TypeBucket {
+			continue
+		}
+		require.NotNil(t, row.State.S3, "bucket posture must survive into the checks")
+		assert.Equal(t, model.StatusOK, row.Statuses[model.CheckCoverage])
+		return
+	}
+	t.Fatal("no bucket row found")
 }
 
 func contains(haystack, needle string) bool {
