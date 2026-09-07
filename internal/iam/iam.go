@@ -103,6 +103,16 @@ var actionGroups = []struct {
 			"dynamodb:ListTagsOfResource",
 		},
 	},
+	{
+		sid:     "FileSystemPosture",
+		purpose: "inventory EFS filesystems and read automatic backups and replication",
+		actions: []string{
+			"elasticfilesystem:DescribeFileSystems",
+			"elasticfilesystem:DescribeBackupPolicy",
+			"elasticfilesystem:DescribeReplicationConfigurations",
+			"elasticfilesystem:ListTagsForResource",
+		},
+	},
 }
 
 // BuildPolicy returns the least-privilege policy document.

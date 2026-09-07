@@ -369,3 +369,28 @@ func TestFormatAccount(t *testing.T) {
 	assert.Equal(t, "1234-5678-9012", formatAccount("123456789012"))
 	assert.Equal(t, "short", formatAccount("short"), "non-12-digit ids pass through unchanged")
 }
+
+func TestScopeAndMethodDocumentsEFS(t *testing.T) {
+	// Scope & method is static copy, so an empty result renders it — the same
+	// shape TestScopeAndMethodDocumentsTheBucketHierarchy uses.
+	var buf bytes.Buffer
+	require.NoError(t, RenderHTML(&buf, &model.Result{}))
+	out := buf.String()
+
+	for _, want := range []string{
+		"automatic backups",
+		"EFS Replication",
+		"One Zone",
+	} {
+		assert.Contains(t, out, want,
+			"Scope & method must document how EFS coverage and redundancy are decided")
+	}
+}
+
+func TestEmptyEstateCopyNamesFileSystems(t *testing.T) {
+	// The "nothing found" line is a scope claim: it must not imply we looked
+	// for fewer resource types than we did.
+	var buf bytes.Buffer
+	require.NoError(t, RenderHTML(&buf, &model.Result{}))
+	assert.Contains(t, buf.String(), "EFS filesystems found in the scanned regions")
+}

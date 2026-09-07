@@ -27,12 +27,14 @@ var mutatingVerbs = []string{
 // rather than waiting for a reviewer to notice.
 func TestInterfacesAreReadOnly(t *testing.T) {
 	interfaces := map[string]reflect.Type{
-		"STSAPI":    reflect.TypeOf((*STSAPI)(nil)).Elem(),
-		"EC2API":    reflect.TypeOf((*EC2API)(nil)).Elem(),
-		"RDSAPI":    reflect.TypeOf((*RDSAPI)(nil)).Elem(),
-		"BackupAPI": reflect.TypeOf((*BackupAPI)(nil)).Elem(),
-		"EKSAPI":    reflect.TypeOf((*EKSAPI)(nil)).Elem(),
-		"S3API":     reflect.TypeOf((*S3API)(nil)).Elem(),
+		"STSAPI":      reflect.TypeOf((*STSAPI)(nil)).Elem(),
+		"EC2API":      reflect.TypeOf((*EC2API)(nil)).Elem(),
+		"RDSAPI":      reflect.TypeOf((*RDSAPI)(nil)).Elem(),
+		"BackupAPI":   reflect.TypeOf((*BackupAPI)(nil)).Elem(),
+		"EKSAPI":      reflect.TypeOf((*EKSAPI)(nil)).Elem(),
+		"S3API":       reflect.TypeOf((*S3API)(nil)).Elem(),
+		"DynamoDBAPI": reflect.TypeOf((*DynamoDBAPI)(nil)).Elem(),
+		"EFSAPI":      reflect.TypeOf((*EFSAPI)(nil)).Elem(),
 	}
 
 	for name, typ := range interfaces {
@@ -79,6 +81,16 @@ func TestNewInterfacesAreReadOnly(t *testing.T) {
 				strings.HasPrefix(method, "Get")
 			assert.True(t, isRead, "%s.%s is not a read verb", name, method)
 		}
+	}
+}
+
+func TestEFSAPICoversTheCallsTheScannerNeeds(t *testing.T) {
+	typ := reflect.TypeOf((*EFSAPI)(nil)).Elem()
+	for _, want := range []string{
+		"DescribeFileSystems", "DescribeBackupPolicy", "DescribeReplicationConfigurations", "ListTagsForResource",
+	} {
+		_, ok := typ.MethodByName(want)
+		assert.True(t, ok, "EFSAPI is missing %s", want)
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
+	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
@@ -328,6 +330,53 @@ func (f *fakeDynamoDB) ListTagsOfResource(_ context.Context, in *dynamodb.ListTa
 	return &dynamodb.ListTagsOfResourceOutput{Tags: f.tags[awssdk.ToString(in.ResourceArn)]}, nil
 }
 
+// ---------------------------------------------------------------- fake EFS
+
+type fakeEFS struct {
+	filesystems  []efstypes.FileSystemDescription
+	policy       map[string]efstypes.Status // by filesystem id
+	policyNilFor map[string]bool            // ids for which BackupPolicy itself is nil
+	policyErr    error
+	replication  map[string][]efstypes.Destination // by filesystem id
+	replErr      error
+}
+
+func (f *fakeEFS) DescribeFileSystems(_ context.Context, _ *efs.DescribeFileSystemsInput, _ ...func(*efs.Options)) (*efs.DescribeFileSystemsOutput, error) {
+	return &efs.DescribeFileSystemsOutput{FileSystems: f.filesystems}, nil
+}
+
+func (f *fakeEFS) DescribeBackupPolicy(_ context.Context, in *efs.DescribeBackupPolicyInput, _ ...func(*efs.Options)) (*efs.DescribeBackupPolicyOutput, error) {
+	if f.policyErr != nil {
+		return nil, f.policyErr
+	}
+	id := awssdk.ToString(in.FileSystemId)
+	if f.policyNilFor[id] {
+		return &efs.DescribeBackupPolicyOutput{BackupPolicy: nil}, nil
+	}
+	status, ok := f.policy[id]
+	if !ok {
+		return nil, &smithy.GenericAPIError{Code: "PolicyNotFound"}
+	}
+	return &efs.DescribeBackupPolicyOutput{BackupPolicy: &efstypes.BackupPolicy{Status: status}}, nil
+}
+
+func (f *fakeEFS) DescribeReplicationConfigurations(_ context.Context, in *efs.DescribeReplicationConfigurationsInput, _ ...func(*efs.Options)) (*efs.DescribeReplicationConfigurationsOutput, error) {
+	if f.replErr != nil {
+		return nil, f.replErr
+	}
+	dests, ok := f.replication[awssdk.ToString(in.FileSystemId)]
+	if !ok {
+		return &efs.DescribeReplicationConfigurationsOutput{}, nil
+	}
+	return &efs.DescribeReplicationConfigurationsOutput{
+		Replications: []efstypes.ReplicationConfigurationDescription{{Destinations: dests}},
+	}, nil
+}
+
+func (f *fakeEFS) ListTagsForResource(_ context.Context, _ *efs.ListTagsForResourceInput, _ ...func(*efs.Options)) (*efs.ListTagsForResourceOutput, error) {
+	return &efs.ListTagsForResourceOutput{}, nil
+}
+
 // ----------------------------------------------------------- fake Provider
 
 type fakeProvider struct {
@@ -353,6 +402,7 @@ func (f *fakeProvider) For(region string) Clients {
 		EKS:      &fakeEKS{},
 		S3:       &fakeS3{},
 		DynamoDB: &fakeDynamoDB{},
+		EFS:      &fakeEFS{},
 	}
 }
 

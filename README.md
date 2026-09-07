@@ -143,7 +143,8 @@ Any flag can also be set by environment variable: `DRILLPROOF_REGION`,
 
 ## What it checks
 
-For every **EBS volume**, **RDS instance/cluster**, and **EKS cluster state**:
+For every **EBS volume**, **RDS instance/cluster**, **EKS cluster state**, **S3
+bucket**, **DynamoDB table**, and **EFS filesystem**:
 
 | Check               | Question                                            | Why it matters                                                             |
 | ------------------- | --------------------------------------------------- | -------------------------------------------------------------------------- |
@@ -311,11 +312,12 @@ Two tests exist specifically to stop the product's promises rotting:
 
 ## Scope
 
-**v1 covers** EBS, RDS, and EKS cluster state on AWS, read-only.
+**v1 covers** EBS, RDS, EKS cluster state, S3, DynamoDB, and EFS on AWS,
+read-only.
 
-**v1 does not cover**, deliberately: actual test-restores (`verify`), S3/EFS/
-DynamoDB resources, org-wide or cross-account scans, non-AWS clouds, and any
-write operation whatsoever.
+**v1 does not cover**, deliberately: actual test-restores (`verify`),
+org-wide or cross-account scans, non-AWS clouds, and any write operation
+whatsoever.
 
 `verify` is absent for a reason. Performing a restore needs write permissions and
 real isolation guarantees, and shipping that carelessly is how an audit tool

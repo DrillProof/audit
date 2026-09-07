@@ -70,6 +70,7 @@ func estate() *fakeProvider {
 		EKS:      &fakeEKS{clusters: []string{"prod-cluster"}},
 		S3:       &fakeS3{},
 		DynamoDB: &fakeDynamoDB{},
+		EFS:      &fakeEFS{},
 	}
 
 	// The DR region holds a copy of the volume's recovery point, which is what
@@ -93,6 +94,7 @@ func estate() *fakeProvider {
 		EKS:      &fakeEKS{},
 		S3:       &fakeS3{},
 		DynamoDB: &fakeDynamoDB{},
+		EFS:      &fakeEFS{},
 	}
 
 	return &fakeProvider{
@@ -462,6 +464,7 @@ func TestScanIncludesBucketsAndTables(t *testing.T) {
 						"sessions": {TableArn: awssdk.String("arn:aws:dynamodb:us-east-1:1:table/sessions")},
 					},
 				},
+				EFS: &fakeEFS{},
 			},
 		},
 	}
@@ -500,6 +503,7 @@ func TestScanPreservesBucketProtectionState(t *testing.T) {
 						"uploads": {Status: s3types.BucketVersioningStatusEnabled, MFADelete: s3types.MFADeleteStatusEnabled},
 					},
 				},
+				EFS: &fakeEFS{},
 			},
 		},
 	}

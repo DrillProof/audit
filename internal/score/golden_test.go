@@ -19,7 +19,7 @@ import (
 //
 // Regenerate after any change to weights or scoring logic:
 //
-//	EMIT_GOLDEN=1 GOLDEN_OUT=../app/packages/shared/src/__fixtures__/scorer-golden.json \
+//	EMIT_GOLDEN=1 GOLDEN_OUT=../../../app/packages/shared/src/__fixtures__/scorer-golden.json \
 //	  go test -run TestEmitGoldenFixtures ./internal/score/
 //
 // Skipped by default so it never runs in normal CI.
@@ -39,6 +39,18 @@ func TestEmitGoldenFixtures(t *testing.T) {
 	prodBucket := res("customer-uploads", model.TypeBucket, true)
 	devBucket := res("build-artifacts", model.TypeBucket, false)
 	prodTable := res("sessions", model.TypeTable, true)
+	efsRegional := model.Resource{
+		Display: "shared-data (EFS)", Name: "shared-data", Type: model.TypeFileSystem,
+		Region: "us-east-1", Attrs: map[string]string{"storage_class": "regional"},
+	}
+	efsOneZone := model.Resource{
+		Display: "cheap-data (EFS)", Name: "cheap-data", Type: model.TypeFileSystem,
+		Region: "us-east-1", Attrs: map[string]string{"storage_class": "one-zone"},
+	}
+	prodEFS := model.Resource{
+		Display: "prod-data (EFS)", Name: "prod-data", Type: model.TypeFileSystem,
+		Region: "us-east-1", Production: true, Attrs: map[string]string{"storage_class": "regional"},
+	}
 
 	f := func(r model.Resource, c model.CheckID, s model.Status, accessGap bool) model.Finding {
 		return model.Finding{Resource: r, Check: c, Status: s, SkipIsAccessGap: accessGap}
@@ -212,6 +224,19 @@ func TestEmitGoldenFixtures(t *testing.T) {
 			f(prodTable, model.CheckImmutability, model.StatusSkipped, false),
 			f(prodTable, model.CheckRedundancy, model.StatusFail, false),
 			f(prodTable, model.CheckRestoreTested, model.StatusFail, false),
+		}},
+		{Name: "coverage-fail-efs-regional-no-bonus", Findings: []model.Finding{
+			f(efsRegional, model.CheckCoverage, model.StatusFail, false),
+		}},
+		{Name: "coverage-fail-efs-one-zone-bonus", Findings: []model.Finding{
+			f(efsOneZone, model.CheckCoverage, model.StatusFail, false),
+		}},
+		{Name: "efs-one-zone-backed-up-not-weighted", Findings: []model.Finding{
+			f(efsOneZone, model.CheckCoverage, model.StatusOK, false),
+			f(efsOneZone, model.CheckRedundancy, model.StatusFail, false),
+		}},
+		{Name: "coverage-fail-prod-efs", Findings: []model.Finding{
+			f(prodEFS, model.CheckCoverage, model.StatusFail, false),
 		}},
 		{Name: "new-permission-denied-is-blocked-never-fail", Findings: []model.Finding{
 			f(devBucket, model.CheckCoverage, model.StatusSkipped, true),

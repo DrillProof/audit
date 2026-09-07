@@ -357,3 +357,73 @@ func TestNotApplicableChecksDeductNothing(t *testing.T) {
 	assert.Equal(t, 0, withNA.Blocked)
 	assert.Equal(t, 0, withNA.RawDeduction)
 }
+
+func efsRes(display, storageClass string, production bool) model.Resource {
+	return model.Resource{
+		Display: display, Name: display, Type: model.TypeFileSystem,
+		Region: "us-east-1", Production: production,
+		Attrs: map[string]string{"storage_class": storageClass},
+	}
+}
+
+func TestOneZoneFileSystemWithNoBackupTakesTheCriticalBonus(t *testing.T) {
+	regional := Compute([]model.Finding{{
+		Resource: efsRes("shared-data (EFS)", "regional", false),
+		Check:    model.CheckCoverage, Status: model.StatusFail,
+	}})
+	oneZone := Compute([]model.Finding{{
+		Resource: efsRes("cheap-data (EFS)", "one-zone", false),
+		Check:    model.CheckCoverage, Status: model.StatusFail,
+	}})
+
+	assert.Equal(t, WeightCoverageFail, regional.RawDeduction)
+	assert.Equal(t,
+		WeightCoverageFail+WeightCoverageCriticalBonus,
+		oneZone.RawDeduction,
+		"single-AZ durability plus no recovery path is the compounding risk the spec weights extra")
+	assert.Contains(t, oneZone.Penalties[0].Reason, "critical")
+}
+
+func TestOneZoneBonusAppliesOnceNotPerCheck(t *testing.T) {
+	r := efsRes("cheap-data (EFS)", "one-zone", false)
+	s := Compute([]model.Finding{
+		{Resource: r, Check: model.CheckCoverage, Status: model.StatusFail},
+		{Resource: r, Check: model.CheckImmutability, Status: model.StatusFail},
+		{Resource: r, Check: model.CheckRedundancy, Status: model.StatusFail},
+	})
+
+	coverage := 0
+	for _, p := range s.Penalties {
+		if p.Check == model.CheckCoverage {
+			coverage++
+		}
+	}
+	assert.Equal(t, 1, coverage, "the bonus is a coverage-only deduction, not a multiplier")
+	assert.Equal(t,
+		WeightCoverageFail+WeightCoverageCriticalBonus+
+			WeightImmutabilityFail+WeightRedundancyFail,
+		s.RawDeduction)
+}
+
+func TestOneZoneWithBackupsIsNotPenalisedForItsStorageClass(t *testing.T) {
+	r := efsRes("cheap-data (EFS)", "one-zone", false)
+	s := Compute([]model.Finding{
+		{Resource: r, Check: model.CheckCoverage, Status: model.StatusOK},
+		{Resource: r, Check: model.CheckFreshness, Status: model.StatusOK},
+		{Resource: r, Check: model.CheckImmutability, Status: model.StatusOK},
+		{Resource: r, Check: model.CheckRedundancy, Status: model.StatusOK},
+		{Resource: r, Check: model.CheckRestoreTested, Status: model.StatusOK},
+	})
+	assert.Equal(t, 100, s.Value)
+	assert.Equal(t, 0, s.RawDeduction)
+	assert.Equal(t, 1, s.ResourceScores[0].Weight,
+		"a deliberate, properly-backed-up cost choice must not be double-weighted")
+}
+
+func TestProductionFileSystemIsWeightedLikeAProductionDatabase(t *testing.T) {
+	s := Compute([]model.Finding{{
+		Resource: efsRes("prod-data (EFS)", "regional", true),
+		Check:    model.CheckRedundancy, Status: model.StatusFail,
+	}})
+	assert.Equal(t, 2, s.ResourceScores[0].Weight)
+}

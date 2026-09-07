@@ -21,6 +21,7 @@ var servicePrefix = map[string]string{
 	"EKSAPI":      "eks",
 	"S3API":       "s3",
 	"DynamoDBAPI": "dynamodb",
+	"EFSAPI":      "elasticfilesystem",
 }
 
 // iamActionExceptions covers the places where the IAM action name differs from
@@ -42,6 +43,7 @@ func interfaceTypes() map[string]reflect.Type {
 		"EKSAPI":      reflect.TypeOf((*awsx.EKSAPI)(nil)).Elem(),
 		"S3API":       reflect.TypeOf((*awsx.S3API)(nil)).Elem(),
 		"DynamoDBAPI": reflect.TypeOf((*awsx.DynamoDBAPI)(nil)).Elem(),
+		"EFSAPI":      reflect.TypeOf((*awsx.EFSAPI)(nil)).Elem(),
 	}
 }
 
@@ -195,4 +197,32 @@ func TestExplanationCoversEveryStatement(t *testing.T) {
 	lines := Explanation()
 	assert.Len(t, lines, len(BuildPolicy().Statement),
 		"every statement needs a stated purpose so reviewers can see why it is there")
+}
+
+func TestPolicyCoversEFS(t *testing.T) {
+	actions := map[string]bool{}
+	for _, a := range AllActions() {
+		actions[a] = true
+	}
+	for _, want := range []string{
+		"elasticfilesystem:DescribeFileSystems",
+		"elasticfilesystem:DescribeBackupPolicy",
+		"elasticfilesystem:DescribeReplicationConfigurations",
+		"elasticfilesystem:ListTagsForResource",
+	} {
+		assert.True(t, actions[want], "policy is missing %s", want)
+	}
+}
+
+func TestEFSNeedsNoNewBackupActions(t *testing.T) {
+	// EFS recovery points are read through the AWS Backup permissions the
+	// policy already grants (spec §3). A new backup:* action here would mean
+	// asking every existing customer for more than EFS actually needs.
+	backupActions := 0
+	for _, a := range AllActions() {
+		if strings.HasPrefix(a, "backup:") {
+			backupActions++
+		}
+	}
+	assert.Equal(t, 5, backupActions, "the backup:* set must not grow for EFS")
 }

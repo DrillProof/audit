@@ -41,6 +41,27 @@ func TestEmitCheckFixtures(t *testing.T) {
 
 	bucketRes := model.Resource{Display: "customer-uploads (S3)", Name: "customer-uploads", Type: model.TypeBucket, Region: "us-east-1"}
 	tableRes := model.Resource{Display: "sessions (DynamoDB)", Name: "sessions", Type: model.TypeTable, Region: "us-east-1"}
+	fsRes := model.Resource{
+		Display: "shared-data (EFS)", Name: "shared-data",
+		Type: model.TypeFileSystem, Region: "us-east-1",
+		Attrs: map[string]string{"storage_class": "regional"},
+	}
+	oneZoneRes := model.Resource{
+		Display: "cheap-data (EFS)", Name: "cheap-data",
+		Type: model.TypeFileSystem, Region: "us-east-1",
+		Attrs: map[string]string{"storage_class": "one-zone", "availability_zone": "us-east-1a"},
+	}
+	efsState := func(automatic model.Tristate, recoveryPoints int, repl model.EFSReplicationState) *model.BackupState {
+		s := model.NewBackupState()
+		s.EFS = &model.EFSProtection{AutomaticBackups: automatic, OneZone: model.No, Replication: repl}
+		s.RecoveryPoints = recoveryPoints
+		return s
+	}
+	noRepl := model.EFSReplicationState{Configured: model.No}
+	healthyRepl := model.EFSReplicationState{
+		Configured: model.Yes, Healthy: model.Yes, CrossRegion: model.Yes,
+		DestRegions: []string{"us-west-2"},
+	}
 
 	// healthyReplication is the baseline used by the coverage-tier cases,
 	// which are about the tier alone — replication branches get their own
@@ -165,6 +186,70 @@ func TestEmitCheckFixtures(t *testing.T) {
 			s.MarkUnassessed(model.CheckCoverage, "dynamodb:DescribeContinuousBackups denied")
 			return s
 		}()},
+
+		// Coverage accepts automatic backups OR a plan. The automatic-only
+		// case is the false-positive guard.
+		{"efs-automatic-backups-only", fsRes, efsState(model.Yes, 0, noRepl)},
+		{"efs-backup-plan-only", fsRes, func() *model.BackupState {
+			s := efsState(model.No, 3, noRepl)
+			backedUp := now.Add(-2 * time.Hour)
+			s.LatestBackupAt = &backedUp
+			s.Immutable = model.Yes
+			s.CrossRegion = model.Yes
+			return s
+		}()},
+		{"efs-both-automatic-and-plan", fsRes, func() *model.BackupState {
+			s := efsState(model.Yes, 2, noRepl)
+			backedUp := now.Add(-30 * time.Hour)
+			s.LatestBackupAt = &backedUp
+			s.Immutable = model.No
+			s.CrossRegion = model.No
+			return s
+		}()},
+		{"efs-neither", fsRes, efsState(model.No, 0, noRepl)},
+
+		// Redundancy: replication is the second valid path, and its
+		// unhealthy/same-region/unreadable branches must all be distinct.
+		{"efs-replication-cross-region-healthy", fsRes, efsState(model.Yes, 0, healthyRepl)},
+		{"efs-replication-same-region", fsRes, efsState(model.Yes, 0, model.EFSReplicationState{
+			Configured: model.Yes, Healthy: model.Yes, CrossRegion: model.No,
+			DestRegions: []string{"us-east-1"},
+		})},
+		{"efs-replication-unhealthy", fsRes, efsState(model.Yes, 0, model.EFSReplicationState{
+			Configured: model.Yes, Healthy: model.No, CrossRegion: model.Yes,
+			DestRegions: []string{"us-west-2"},
+		})},
+		{"efs-replication-health-unreadable", fsRes, efsState(model.Yes, 0, model.EFSReplicationState{
+			Configured: model.Yes, Healthy: model.Unknown, CrossRegion: model.Yes,
+		})},
+
+		// One Zone: context when backed up, stated plainly when not.
+		{"efs-one-zone-with-backups", oneZoneRes, func() *model.BackupState {
+			s := efsState(model.Yes, 0, healthyRepl)
+			s.EFS.OneZone = model.Yes
+			s.EFS.AvailabilityZone = "us-east-1a"
+			return s
+		}()},
+		{"efs-one-zone-no-backup", oneZoneRes, func() *model.BackupState {
+			s := efsState(model.No, 0, noRepl)
+			s.EFS.OneZone = model.Yes
+			s.EFS.AvailabilityZone = "us-east-1a"
+			return s
+		}()},
+		{"efs-one-zone-no-backup-no-az", oneZoneRes, func() *model.BackupState {
+			s := efsState(model.No, 0, noRepl)
+			s.EFS.OneZone = model.Yes
+			s.EFS.AvailabilityZone = ""
+			return s
+		}()},
+
+		// Each new permission denied is skipped with the action named.
+		{"efs-permission-denied", fsRes, func() *model.BackupState {
+			s := efsState(model.Unknown, 0, model.EFSReplicationState{Configured: model.Unknown, Healthy: model.Unknown, CrossRegion: model.Unknown})
+			s.MarkUnassessed(model.CheckCoverage, "elasticfilesystem:DescribeBackupPolicy denied")
+			s.MarkUnassessed(model.CheckRedundancy, "elasticfilesystem:DescribeReplicationConfigurations denied")
+			return s
+		}()},
 	}
 
 	type outCase struct {
@@ -244,6 +329,20 @@ type wireDynamo struct {
 	GlobalTableReplicas []string `json:"globalTableReplicas,omitempty"`
 }
 
+type wireEFSReplication struct {
+	Configured  string   `json:"configured"`
+	Healthy     string   `json:"healthy"`
+	CrossRegion string   `json:"crossRegion"`
+	DestRegions []string `json:"destRegions,omitempty"`
+}
+
+type wireEFS struct {
+	AutomaticBackups string             `json:"automaticBackups"`
+	OneZone          string             `json:"oneZone"`
+	AvailabilityZone string             `json:"availabilityZone,omitempty"`
+	Replication      wireEFSReplication `json:"replication"`
+}
+
 type wireState struct {
 	RecoveryPoints           int               `json:"recoveryPoints"`
 	LatestBackupAt           *string           `json:"latestBackupAt,omitempty"`
@@ -255,6 +354,7 @@ type wireState struct {
 	Notes                    []string          `json:"notes,omitempty"`
 	S3                       *wireS3           `json:"s3,omitempty"`
 	Dynamo                   *wireDynamo       `json:"dynamo,omitempty"`
+	EFS                      *wireEFS          `json:"efs,omitempty"`
 }
 
 type wireFinding struct {
@@ -344,6 +444,19 @@ func toWireState(s *model.BackupState) wireState {
 		ws.Dynamo = &wireDynamo{
 			PITR:                s.Dynamo.PITR.String(),
 			GlobalTableReplicas: s.Dynamo.GlobalTableReplicas,
+		}
+	}
+	if s.EFS != nil {
+		ws.EFS = &wireEFS{
+			AutomaticBackups: s.EFS.AutomaticBackups.String(),
+			OneZone:          s.EFS.OneZone.String(),
+			AvailabilityZone: s.EFS.AvailabilityZone,
+			Replication: wireEFSReplication{
+				Configured:  s.EFS.Replication.Configured.String(),
+				Healthy:     s.EFS.Replication.Healthy.String(),
+				CrossRegion: s.EFS.Replication.CrossRegion.String(),
+				DestRegions: s.EFS.Replication.DestRegions,
+			},
 		}
 	}
 	return ws

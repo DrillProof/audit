@@ -201,6 +201,55 @@ means what it did.
 
 ---
 
+## 5a. EFS
+
+EFS filesystems ride the normal per-region fan-out (`internal/aws/filesystems.go`),
+with states keyed by filesystem ARN. Discovery reads four EFS actions:
+`DescribeFileSystems`, `DescribeBackupPolicy`, `DescribeReplicationConfigurations`,
+and `ListTagsForResource`.
+
+- **Coverage** accepts EFS's own automatic-backup feature (a separate AWS Backup
+  default plan, enabled at filesystem creation) *or* a recovery point from a
+  user-defined AWS Backup plan. Either one is real protection; treating only the
+  plan as valid would fail filesystems that are correctly backed up.
+- **Redundancy** accepts an AWS Backup cross-region copy *or* healthy cross-region
+  EFS Replication — EFS's own replication feature, independent of AWS Backup.
+  Same-region replication and unhealthy replication both **fail**, with wording
+  that says which: "targets the same region as the filesystem" for the former,
+  "configured but not healthy" for the latter. Unreadable replication health
+  (`Unknown`) is never treated as healthy — it is reported as `blocked`, same as
+  any other permission gap.
+- **Freshness, immutability, and restore-testing have no EFS-specific branch.**
+  The shared AWS Backup-based helpers already give the right answer for a
+  filesystem's recovery points, so there was nothing to reinterpret — unlike
+  coverage and redundancy, which needed EFS's own backup and replication
+  features folded in alongside AWS Backup.
+- **One Zone is context, not its own check.** A One Zone filesystem
+  (`Resource.Attrs["storage_class"] == "one-zone"`) has no second copy of its
+  own, so a One Zone filesystem with no backup at all is flagged as a
+  compounding risk: it takes the coverage-critical `+10` bonus the same way a
+  production database does (`criticalForCoverage` in `internal/score/score.go`).
+  This deliberately does **not** change the resource's weight in the estate
+  mean — `isCritical` is untouched by storage class — because a One Zone
+  filesystem that *is* backed up is a legitimate cost decision, and penalising
+  it for its storage class would be penalising the architecture, not the
+  recoverability.
+
+Two deliberate divergences from the spec, in addition to the EKS one above:
+
+1. `elasticfilesystem:ListTagsForResource` is requested and called even though
+   `DescribeFileSystems` also returns tags. The dedicated call keeps the
+   production-tag heuristic identical across resource types, and
+   `internal/iam`'s two-way drift test requires the interface and the policy to
+   agree exactly — reading tags off `DescribeFileSystems` instead would leave a
+   permission granted but never called, which that test rejects.
+2. The One Zone signal rides on `Resource.Attrs["storage_class"]` rather than on
+   `BackupState`. The scorer (`internal/score`) only ever sees findings, not
+   discovery state, so the only place left to carry storage class forward is the
+   resource itself.
+
+---
+
 ## 6. Running it
 
 ### Common invocations
