@@ -19,7 +19,7 @@ import (
 //
 // Regenerate after any change to weights or scoring logic:
 //
-//	EMIT_GOLDEN=1 GOLDEN_OUT=../app/packages/shared/src/__fixtures__/scorer-golden.json \
+//	EMIT_GOLDEN=1 GOLDEN_OUT=../../../app/packages/shared/src/__fixtures__/scorer-golden.json \
 //	  go test -run TestEmitGoldenFixtures ./internal/score/
 //
 // Skipped by default so it never runs in normal CI.
