@@ -226,7 +226,7 @@ const htmlTemplate = `<!doctype html>
     </tbody>
   </table>
   {{else}}
-  <p class="notes">No EBS volumes, RDS databases, EKS clusters, S3 buckets, or DynamoDB tables found in the scanned regions.</p>
+  <p class="notes">No EBS volumes, RDS databases, EKS clusters, S3 buckets, DynamoDB tables, or EFS filesystems found in the scanned regions.</p>
   {{end}}
 
   {{if .Findings}}
@@ -274,6 +274,22 @@ const htmlTemplate = `<!doctype html>
     <li><strong>weak</strong> — Object Lock in governance mode only, which any
         principal holding s3:BypassGovernanceRetention can override.</li>
     <li><strong>unprotected</strong> — neither versioning nor Object Lock.</li>
+  </ul>
+
+  <h3>EFS coverage and redundancy</h3>
+  <p>EFS is protected by AWS Backup, so all five checks apply. Two of them
+  accept more than one path, because both are genuine:</p>
+  <ul>
+    <li><strong>Coverage</strong> — either EFS <em>automatic backups</em> (the
+        built-in policy enabled on the filesystem) or a user-defined AWS Backup
+        plan. A filesystem protected by automatic backups alone is protected.</li>
+    <li><strong>Redundancy</strong> — either an AWS Backup cross-region copy or
+        <em>EFS Replication</em> to another region. Replication into the same
+        region does not survive the loss of that region, and a replication that
+        is configured but unhealthy is reported as a failure, not as a copy.</li>
+    <li><strong>One Zone</strong> — a single-AZ filesystem is reported as
+        context. With backups it passes; with no backup at all it is weighted
+        as critical, because single-AZ durability and no recovery path compound.</li>
   </ul>
 
   <h3>Checks that do not apply</h3>
