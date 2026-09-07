@@ -23,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/backup"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -86,6 +87,19 @@ type DynamoDBAPI interface {
 	ListTagsOfResource(context.Context, *dynamodb.ListTagsOfResourceInput, ...func(*dynamodb.Options)) (*dynamodb.ListTagsOfResourceOutput, error)
 }
 
+// EFSAPI covers filesystem inventory, the built-in backup policy, and EFS's
+// own cross-region replication.
+//
+// DescribeBackupPolicy is a per-filesystem call and reports the *automatic*
+// backup feature, which is separate from any user-defined AWS Backup plan —
+// a filesystem protected only by it is still protected.
+type EFSAPI interface {
+	DescribeFileSystems(context.Context, *efs.DescribeFileSystemsInput, ...func(*efs.Options)) (*efs.DescribeFileSystemsOutput, error)
+	DescribeBackupPolicy(context.Context, *efs.DescribeBackupPolicyInput, ...func(*efs.Options)) (*efs.DescribeBackupPolicyOutput, error)
+	DescribeReplicationConfigurations(context.Context, *efs.DescribeReplicationConfigurationsInput, ...func(*efs.Options)) (*efs.DescribeReplicationConfigurationsOutput, error)
+	ListTagsForResource(context.Context, *efs.ListTagsForResourceInput, ...func(*efs.Options)) (*efs.ListTagsForResourceOutput, error)
+}
+
 // Clients is the per-region bundle the scanner works with.
 type Clients struct {
 	Region   string
@@ -95,6 +109,7 @@ type Clients struct {
 	EKS      EKSAPI
 	S3       S3API
 	DynamoDB DynamoDBAPI
+	EFS      EFSAPI
 }
 
 // Provider builds clients. Swapped for a fake in tests.
@@ -159,6 +174,7 @@ func (p *sdkProvider) For(region string) Clients {
 		EKS:      eks.NewFromConfig(cfg),
 		S3:       s3.NewFromConfig(cfg),
 		DynamoDB: dynamodb.NewFromConfig(cfg),
+		EFS:      efs.NewFromConfig(cfg),
 	}
 }
 
@@ -199,7 +215,8 @@ func IsNotFound(err error) bool {
 		switch apiErr.ErrorCode() {
 		case "ObjectLockConfigurationNotFoundError", "NoSuchBucket",
 			"ResourceNotFoundException", "NoSuchObjectLockConfiguration",
-			"ReplicationConfigurationNotFoundError", "NoSuchTagSet":
+			"ReplicationConfigurationNotFoundError", "NoSuchTagSet",
+			"PolicyNotFound", "ReplicationNotFound":
 			return true
 		}
 	}
