@@ -10,7 +10,7 @@ tool, why it is built this way, and how to operate it.
 
 ```sh
 cd cli
-go build -o drillproof .
+go build -o drillproof ./cmd/drillproof
 
 # The provider and regions are auto-detected from your credential chain
 ./drillproof audit scan --profile <your-aws-profile>
