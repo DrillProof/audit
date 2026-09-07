@@ -137,7 +137,29 @@ func Scan(ctx context.Context, p Provider, opts ScanOptions) (*model.Result, err
 				rr.warnings = append(rr.warnings, describeFailure(region, "dynamodb:ListTables", err))
 			} else {
 				rr.resources = append(rr.resources, tbls...)
-				rr.states = tblStates
+				if rr.states == nil {
+					rr.states = tblStates
+				} else {
+					for arn, state := range tblStates {
+						rr.states[arn] = state
+					}
+				}
+			}
+
+			if fss, fsStates, err := FileSystems(ctx, c); err != nil {
+				rr.warnings = append(rr.warnings, describeFailure(region, "elasticfilesystem:DescribeFileSystems", err))
+			} else {
+				rr.resources = append(rr.resources, fss...)
+				// Tables may already have populated rr.states, so merge
+				// rather than assign — assigning would drop every table in
+				// this region on the floor.
+				if rr.states == nil {
+					rr.states = fsStates
+				} else {
+					for arn, state := range fsStates {
+						rr.states[arn] = state
+					}
+				}
 			}
 
 			mu.Lock()
