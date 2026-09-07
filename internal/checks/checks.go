@@ -79,6 +79,9 @@ func Coverage(r model.Resource, s *model.BackupState, _ Config) model.Finding {
 	if r.Type == model.TypeTable {
 		return coverageTable(r, s)
 	}
+	if r.Type == model.TypeFileSystem {
+		return coverageFileSystem(r, s)
+	}
 
 	f := model.Finding{Resource: r, Check: model.CheckCoverage}
 	if s.RecoveryPoints > 0 {
@@ -192,6 +195,9 @@ func Redundancy(r model.Resource, s *model.BackupState, _ Config) model.Finding 
 	}
 	if r.Type == model.TypeTable {
 		return redundancyTable(r, s)
+	}
+	if r.Type == model.TypeFileSystem {
+		return redundancyFileSystem(r, s)
 	}
 	return redundancyFromVaults(r, s)
 }
