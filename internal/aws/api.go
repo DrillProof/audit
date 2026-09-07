@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/backup"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
@@ -64,20 +65,36 @@ type EKSAPI interface {
 	DescribeCluster(context.Context, *eks.DescribeClusterInput, ...func(*eks.Options)) (*eks.DescribeClusterOutput, error)
 }
 
-// S3API covers Object Lock status on backup target buckets.
+// S3API covers bucket inventory and deletion-protection posture.
+//
+// ListBuckets is account-global: it returns every bucket regardless of the
+// client's region. Callers must therefore invoke it once, not per region.
 type S3API interface {
-	GetObjectLockConfiguration(context.Context, *s3.GetObjectLockConfigurationInput, ...func(*s3.Options)) (*s3.GetObjectLockConfigurationOutput, error)
+	ListBuckets(context.Context, *s3.ListBucketsInput, ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
 	GetBucketLocation(context.Context, *s3.GetBucketLocationInput, ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
+	GetBucketVersioning(context.Context, *s3.GetBucketVersioningInput, ...func(*s3.Options)) (*s3.GetBucketVersioningOutput, error)
+	GetBucketReplication(context.Context, *s3.GetBucketReplicationInput, ...func(*s3.Options)) (*s3.GetBucketReplicationOutput, error)
+	GetObjectLockConfiguration(context.Context, *s3.GetObjectLockConfigurationInput, ...func(*s3.Options)) (*s3.GetObjectLockConfigurationOutput, error)
+	GetBucketTagging(context.Context, *s3.GetBucketTaggingInput, ...func(*s3.Options)) (*s3.GetBucketTaggingOutput, error)
+}
+
+// DynamoDBAPI covers table inventory and Point-in-Time Recovery status.
+type DynamoDBAPI interface {
+	ListTables(context.Context, *dynamodb.ListTablesInput, ...func(*dynamodb.Options)) (*dynamodb.ListTablesOutput, error)
+	DescribeTable(context.Context, *dynamodb.DescribeTableInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error)
+	DescribeContinuousBackups(context.Context, *dynamodb.DescribeContinuousBackupsInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeContinuousBackupsOutput, error)
+	ListTagsOfResource(context.Context, *dynamodb.ListTagsOfResourceInput, ...func(*dynamodb.Options)) (*dynamodb.ListTagsOfResourceOutput, error)
 }
 
 // Clients is the per-region bundle the scanner works with.
 type Clients struct {
-	Region string
-	EC2    EC2API
-	RDS    RDSAPI
-	Backup BackupAPI
-	EKS    EKSAPI
-	S3     S3API
+	Region   string
+	EC2      EC2API
+	RDS      RDSAPI
+	Backup   BackupAPI
+	EKS      EKSAPI
+	S3       S3API
+	DynamoDB DynamoDBAPI
 }
 
 // Provider builds clients. Swapped for a fake in tests.
@@ -135,12 +152,13 @@ func (p *sdkProvider) For(region string) Clients {
 	cfg := p.cfg.Copy()
 	cfg.Region = region
 	return Clients{
-		Region: region,
-		EC2:    ec2.NewFromConfig(cfg),
-		RDS:    rds.NewFromConfig(cfg),
-		Backup: backup.NewFromConfig(cfg),
-		EKS:    eks.NewFromConfig(cfg),
-		S3:     s3.NewFromConfig(cfg),
+		Region:   region,
+		EC2:      ec2.NewFromConfig(cfg),
+		RDS:      rds.NewFromConfig(cfg),
+		Backup:   backup.NewFromConfig(cfg),
+		EKS:      eks.NewFromConfig(cfg),
+		S3:       s3.NewFromConfig(cfg),
+		DynamoDB: dynamodb.NewFromConfig(cfg),
 	}
 }
 
@@ -180,7 +198,8 @@ func IsNotFound(err error) bool {
 	if errors.As(err, &apiErr) {
 		switch apiErr.ErrorCode() {
 		case "ObjectLockConfigurationNotFoundError", "NoSuchBucket",
-			"ResourceNotFoundException", "NoSuchObjectLockConfiguration":
+			"ResourceNotFoundException", "NoSuchObjectLockConfiguration",
+			"ReplicationConfigurationNotFoundError", "NoSuchTagSet":
 			return true
 		}
 	}

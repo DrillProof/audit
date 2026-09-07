@@ -16,6 +16,12 @@ import (
 func RenderHTML(w io.Writer, result *model.Result) error {
 	cfg := checks.DefaultConfig()
 
+	type htmlSkip struct {
+		Resource string
+		Summary  string
+		Cls      string
+	}
+
 	type htmlRow struct {
 		Resource   string
 		Type       string
@@ -39,6 +45,7 @@ func RenderHTML(w io.Writer, result *model.Result) error {
 		Band      string
 		Rows      []htmlRow
 		Findings  []model.Finding
+		Skipped   []htmlSkip
 		Explain   []string
 		Warnings  []string
 		Untested  int
@@ -75,6 +82,27 @@ func RenderHTML(w io.Writer, result *model.Result) error {
 	}
 
 	data.Findings = aws.TopFindings(result, 20)
+
+	// Skipped checks split into two lists that must never look alike: an
+	// access gap (a permission we lack, and the reader can fix) versus not
+	// applicable (nothing to assess, no permission would change that).
+	// Telling a customer to grant a permission they already hold is a false
+	// statement about their estate, so the two are never merged into one
+	// generic "skipped" bucket.
+	for _, f := range result.Findings {
+		if f.Status != model.StatusSkipped {
+			continue
+		}
+		skipCls := "na"
+		if f.SkipIsAccessGap {
+			skipCls = "gap"
+		}
+		data.Skipped = append(data.Skipped, htmlSkip{
+			Resource: f.Resource.Display,
+			Summary:  f.Summary,
+			Cls:      skipCls,
+		})
+	}
 
 	tmpl, err := template.New("report").Parse(htmlTemplate)
 	if err != nil {
@@ -150,6 +178,8 @@ const htmlTemplate = `<!doctype html>
   ul.findings { list-style: none; padding: 0; margin: 0; }
   ul.findings li { padding: .6rem 0; border-bottom: 1px solid var(--line); font-size: .9375rem; }
   ul.findings .res { font-weight: 600; }
+  ul.findings li.gap { color: var(--warn); }
+  ul.findings li.na { color: var(--slate); }
   ul.findings .rem { color: var(--slate); display: block; font-size: .875rem; margin-top: .15rem; }
   pre.explain { background: var(--bg-dark); color: #D6E0F2; padding: 1rem 1.25rem;
     border-radius: 10px; overflow-x: auto; font-size: .75rem; line-height: 1.7; }
@@ -196,7 +226,7 @@ const htmlTemplate = `<!doctype html>
     </tbody>
   </table>
   {{else}}
-  <p class="notes">No EBS volumes, RDS databases, or EKS clusters found in the scanned regions.</p>
+  <p class="notes">No EBS volumes, RDS databases, EKS clusters, S3 buckets, or DynamoDB tables found in the scanned regions.</p>
   {{end}}
 
   {{if .Findings}}
@@ -216,10 +246,49 @@ const htmlTemplate = `<!doctype html>
   <pre class="explain">{{range .Explain}}{{.}}
 {{end}}</pre>
 
+  {{if .Skipped}}
+  <h2>Checks not assessed or not applicable</h2>
+  <ul class="findings">
+    {{range .Skipped}}
+    <li class="{{.Cls}}"><span class="res">{{.Resource}}</span> — {{.Summary}}</li>
+    {{end}}
+  </ul>
+  {{end}}
+
   {{if .Warnings}}
   <h2>Not assessed</h2>
   <ul class="notes">{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>
   {{end}}
+
+  <h2>Scope &amp; method</h2>
+
+  <h3>S3 protection hierarchy</h3>
+  <p>S3 is not a volume — it <em>is</em> the storage — so a bucket is graded on
+  how hard it is to delete, not on whether a backup of it exists:</p>
+  <ul>
+    <li><strong>strongest</strong> — Object Lock in compliance mode. Nothing,
+        including root, can delete before retention expires.</li>
+    <li><strong>strong</strong> — versioning and MFA Delete both enabled.</li>
+    <li><strong>partial</strong> — versioning enabled, MFA Delete off or
+        unreadable.</li>
+    <li><strong>weak</strong> — Object Lock in governance mode only, which any
+        principal holding s3:BypassGovernanceRetention can override.</li>
+    <li><strong>unprotected</strong> — neither versioning nor Object Lock.</li>
+  </ul>
+
+  <h3>Checks that do not apply</h3>
+  <p>Some checks have no meaning for some resource types, and are reported as
+  <em>not applicable</em>. They deduct nothing, and are shown separately from
+  <em>not assessed</em>, which means a permission stopped us from looking:</p>
+  <ul>
+    <li><strong>S3 freshness</strong> — a live bucket has no "last backup age".
+        Last-modified time answers a different question and is not substituted.</li>
+    <li><strong>S3 restore-testing</strong> — not implemented for buckets in this
+        release. No bucket is reported as verified.</li>
+    <li><strong>DynamoDB freshness and immutability</strong>, when the table is
+        protected by Point-in-Time Recovery alone — PITR is continuous and has no
+        vault to lock.</li>
+  </ul>
 
   <div class="cta">
     <strong>Want these gaps closed with evidence?</strong><br>

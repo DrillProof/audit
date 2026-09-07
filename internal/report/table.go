@@ -100,7 +100,7 @@ func RenderTable(dst io.Writer, result *model.Result, opts Options) error {
 	w.println(p.dim(strings.Repeat("─", min(len(header), 78))))
 
 	if len(result.Rows) == 0 {
-		w.println(p.dim("No EBS volumes, RDS databases, or EKS clusters found in the scanned regions."))
+		w.println(p.dim("No EBS volumes, RDS databases, EKS clusters, S3 buckets, or DynamoDB tables found in the scanned regions."))
 		w.println()
 	} else {
 		t := table.NewWriter()

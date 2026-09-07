@@ -25,6 +25,10 @@ type ScanOptions struct {
 	// Nil means no --kubeconfig was given, in which case cluster state is
 	// reported as "not assessed" rather than guessed at.
 	Cluster *k8s.State
+	// BucketAllowList narrows S3 discovery to named buckets. Empty means every
+	// bucket in the account. Set by customers whose security team will not
+	// grant account-wide s3:ListAllMyBuckets.
+	BucketAllowList []string
 }
 
 // DefaultConcurrency is a compromise between a fast scan and AWS rate limits.
@@ -74,10 +78,24 @@ func Scan(ctx context.Context, p Provider, opts ScanOptions) (*model.Result, err
 			fmt.Sprintf("%s: %s — immutability and redundancy not assessed there", region, reason))
 	}
 
+	// Buckets are enumerated once per account, not per region: ListBuckets is
+	// global, so a per-region call would return every bucket once per region.
+	bucketResources, bucketStates, bucketWarnings := Buckets(ctx, p, regions, opts.BucketAllowList)
+	result.Warnings = append(result.Warnings, bucketWarnings...)
+
+	if len(opts.BucketAllowList) > 0 {
+		// Stated explicitly: "3 buckets, all protected" must never read as an
+		// account-wide claim when the customer chose the three.
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"S3 scope was restricted to %d named bucket(s); other buckets in this account were not assessed",
+			len(opts.BucketAllowList)))
+	}
+
 	// --- Inventory, in parallel across regions ---
 	type regionResult struct {
 		resources []model.Resource
 		warnings  []string
+		states    map[string]*model.BackupState
 	}
 
 	var (
@@ -115,6 +133,13 @@ func Scan(ctx context.Context, p Provider, opts ScanOptions) (*model.Result, err
 				rr.resources = append(rr.resources, cl...)
 			}
 
+			if tbls, tblStates, err := Tables(ctx, c); err != nil {
+				rr.warnings = append(rr.warnings, describeFailure(region, "dynamodb:ListTables", err))
+			} else {
+				rr.resources = append(rr.resources, tbls...)
+				rr.states = tblStates
+			}
+
 			mu.Lock()
 			collected = append(collected, rr)
 			mu.Unlock()
@@ -122,10 +147,23 @@ func Scan(ctx context.Context, p Provider, opts ScanOptions) (*model.Result, err
 	}
 	wg.Wait()
 
+	// discoveredStates carries what discovery already learned about a resource
+	// (S3/DynamoDB posture) into the check loop below, keyed the same way
+	// Buckets/Tables key their own maps: buckets by name (no ARN in the map),
+	// everything else by ARN.
+	discoveredStates := map[string]*model.BackupState{}
+	for name, state := range bucketStates {
+		discoveredStates[name] = state
+	}
+
 	var resources []model.Resource
+	resources = append(resources, bucketResources...)
 	for _, rr := range collected {
 		resources = append(resources, rr.resources...)
 		result.Warnings = append(result.Warnings, rr.warnings...)
+		for arn, state := range rr.states {
+			discoveredStates[arn] = state
+		}
 	}
 
 	// Stable ordering so output and score are reproducible run to run.
@@ -141,7 +179,17 @@ func Scan(ctx context.Context, p Provider, opts ScanOptions) (*model.Result, err
 
 	// --- Evidence + checks per resource ---
 	for _, res := range resources {
-		state := GatherBackupState(ctx, p, res, vaults)
+		// Buckets are keyed by name (no ARN in their state map); everything
+		// else by ARN.
+		key := res.ARN
+		if res.Type == model.TypeBucket {
+			key = res.Name
+		}
+		state := discoveredStates[key]
+		if state == nil {
+			state = model.NewBackupState()
+		}
+		state = GatherBackupStateInto(ctx, p, res, vaults, state)
 
 		// Cluster state is the one resource type AWS cannot answer for. Merge
 		// in-cluster evidence when we have it, and be explicit when we do not.

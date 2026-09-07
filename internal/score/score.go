@@ -249,7 +249,10 @@ func isCritical(r model.Resource) bool {
 	if r.Type == model.TypeK8sState {
 		return true
 	}
-	return r.Production && (r.Type == model.TypeDatabase || r.Type == model.TypeDBCluster)
+	return r.Production && (r.Type == model.TypeDatabase ||
+		r.Type == model.TypeDBCluster ||
+		r.Type == model.TypeBucket ||
+		r.Type == model.TypeTable)
 }
 
 // Explain renders the score arithmetic as lines suitable for a report or

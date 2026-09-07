@@ -64,6 +64,45 @@ func TestInterfacesAreReadOnly(t *testing.T) {
 	}
 }
 
+func TestNewInterfacesAreReadOnly(t *testing.T) {
+	// The guard that makes "we cannot mutate anything" a compile-time fact
+	// rather than a review promise. A mutating method added to either
+	// interface fails here before it can reach a customer account.
+	for name, typ := range map[string]reflect.Type{
+		"S3API":       reflect.TypeOf((*S3API)(nil)).Elem(),
+		"DynamoDBAPI": reflect.TypeOf((*DynamoDBAPI)(nil)).Elem(),
+	} {
+		for i := 0; i < typ.NumMethod(); i++ {
+			method := typ.Method(i).Name
+			isRead := strings.HasPrefix(method, "Describe") ||
+				strings.HasPrefix(method, "List") ||
+				strings.HasPrefix(method, "Get")
+			assert.True(t, isRead, "%s.%s is not a read verb", name, method)
+		}
+	}
+}
+
+func TestDynamoDBAPICoversTheCallsTheScannerNeeds(t *testing.T) {
+	typ := reflect.TypeOf((*DynamoDBAPI)(nil)).Elem()
+	for _, want := range []string{
+		"ListTables", "DescribeTable", "DescribeContinuousBackups", "ListTagsOfResource",
+	} {
+		_, ok := typ.MethodByName(want)
+		assert.True(t, ok, "DynamoDBAPI is missing %s", want)
+	}
+}
+
+func TestS3APICoversTheBucketPostureCalls(t *testing.T) {
+	typ := reflect.TypeOf((*S3API)(nil)).Elem()
+	for _, want := range []string{
+		"ListBuckets", "GetBucketLocation", "GetBucketVersioning",
+		"GetBucketReplication", "GetObjectLockConfiguration", "GetBucketTagging",
+	} {
+		_, ok := typ.MethodByName(want)
+		assert.True(t, ok, "S3API is missing %s", want)
+	}
+}
+
 func TestIsAccessDenied(t *testing.T) {
 	assert.False(t, IsAccessDenied(nil))
 	assert.True(t, IsAccessDenied(&stubAPIErr{code: "AccessDeniedException"}))

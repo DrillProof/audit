@@ -82,11 +82,25 @@ var actionGroups = []struct {
 		},
 	},
 	{
-		sid:     "ObjectLockPosture",
-		purpose: "read Object Lock configuration on backup target buckets",
+		sid:     "BucketPosture",
+		purpose: "inventory S3 buckets and read versioning, Object Lock and replication",
 		actions: []string{
-			"s3:GetBucketObjectLockConfiguration",
+			"s3:ListAllMyBuckets",
 			"s3:GetBucketLocation",
+			"s3:GetBucketVersioning",
+			"s3:GetBucketObjectLockConfiguration",
+			"s3:GetBucketReplication",
+			"s3:GetBucketTagging",
+		},
+	},
+	{
+		sid:     "TableInventory",
+		purpose: "inventory DynamoDB tables and read Point-in-Time Recovery status",
+		actions: []string{
+			"dynamodb:ListTables",
+			"dynamodb:DescribeTable",
+			"dynamodb:DescribeContinuousBackups",
+			"dynamodb:ListTagsOfResource",
 		},
 	},
 }

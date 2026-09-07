@@ -18,6 +18,8 @@ const (
 	TypeDatabase  ResourceType = "database"   // RDS instance
 	TypeDBCluster ResourceType = "db-cluster" // RDS/Aurora cluster
 	TypeK8sState  ResourceType = "k8s-state"  // EKS cluster state / etcd
+	TypeBucket    ResourceType = "bucket"     // S3 bucket
+	TypeTable     ResourceType = "table"      // DynamoDB table
 )
 
 // CheckID identifies one of the five checks. Stable API.
@@ -90,6 +92,72 @@ type Resource struct {
 	Attrs map[string]string `json:"attrs,omitempty"`
 }
 
+// ProtectionTier names how strongly a bucket is protected against deletion.
+//
+// S3 is not a volume — it *is* the storage — so "does a backup exist" is the
+// wrong question and the answer is graded rather than binary. The tier is
+// surfaced in the finding text so a customer can see why they passed or failed
+// rather than being handed a verdict.
+type ProtectionTier string
+
+const (
+	// TierStrongest is Object Lock in COMPLIANCE mode: undeletable before
+	// retention expires, even by root.
+	TierStrongest ProtectionTier = "strongest"
+	// TierStrong is versioning plus MFA Delete.
+	TierStrong ProtectionTier = "strong"
+	// TierPartial is versioning with MFA Delete off or unreadable.
+	TierPartial ProtectionTier = "partial"
+	// TierWeak is Object Lock in GOVERNANCE mode only — overridable by anyone
+	// holding s3:BypassGovernanceRetention.
+	TierWeak ProtectionTier = "weak"
+	// TierUnprotected is neither versioning nor Object Lock.
+	TierUnprotected ProtectionTier = "unprotected"
+)
+
+// ReplicationState is what GetBucketReplication told us.
+//
+// The three fields are deliberately separate rather than one boolean: a rule
+// that exists but is Disabled is the S3 analogue of a silently failing backup
+// schedule, and reporting it as "no replication" would lose the finding most
+// worth having.
+type ReplicationState struct {
+	// Configured is whether any replication configuration exists at all.
+	Configured Tristate `json:"configured"`
+	// EnabledRule is whether at least one rule has Status == Enabled.
+	EnabledRule Tristate `json:"enabled_rule"`
+	// CrossRegion is whether an enabled rule targets another region. Unknown
+	// when the destination bucket's region could not be resolved.
+	CrossRegion Tristate `json:"cross_region"`
+	// DestRegions are the resolved destination regions, for the finding text.
+	DestRegions []string `json:"dest_regions,omitempty"`
+}
+
+// S3Protection is a bucket's deletion-protection posture. Non-nil only when
+// Resource.Type is TypeBucket.
+type S3Protection struct {
+	Tier ProtectionTier `json:"tier"`
+	// ObjectLockMode is "COMPLIANCE", "GOVERNANCE", or "" when Object Lock is
+	// off or no default retention rule is configured.
+	ObjectLockMode string           `json:"object_lock_mode,omitempty"`
+	Versioning     Tristate         `json:"versioning"`
+	MFADelete      Tristate         `json:"mfa_delete"`
+	Replication    ReplicationState `json:"replication"`
+}
+
+// DynamoProtection is a table's continuous-backup posture. Non-nil only when
+// Resource.Type is TypeTable.
+type DynamoProtection struct {
+	// PITR is Point-in-Time Recovery. Most teams protect DynamoDB with this
+	// rather than AWS Backup, so a table with PITR on and no backup plan is
+	// protected — flagging it otherwise is a false positive.
+	PITR Tristate `json:"pitr"`
+	// GlobalTableReplicas are regions holding a global-table replica. A
+	// replica is NOT a backup: a delete propagates to it. Recorded for the
+	// finding text, never to satisfy redundancy.
+	GlobalTableReplicas []string `json:"global_table_replicas,omitempty"`
+}
+
 // BackupState is everything the discovery layer learned about one resource's
 // backups. The checks read this and nothing else.
 type BackupState struct {
@@ -109,6 +177,10 @@ type BackupState struct {
 	// RestoreTestingConfigured reports an AWS Backup restore-testing plan
 	// covering this resource type.
 	RestoreTestingConfigured bool
+	// S3 is the bucket deletion-protection posture. Nil for every other type.
+	S3 *S3Protection `json:"s3,omitempty"`
+	// Dynamo is the table continuous-backup posture. Nil for every other type.
+	Dynamo *DynamoProtection `json:"dynamo,omitempty"`
 	// Unassessed records why a given check could not run — keyed by check.
 	Unassessed map[CheckID]string
 	// Notes are extra facts worth surfacing in the report.

@@ -293,3 +293,67 @@ func TestExplainShowsTheArithmetic(t *testing.T) {
 	assert.Contains(t, joined, "Total raw deduction: 35")
 	assert.NotContains(t, joined, "Starting score: 100", "that arithmetic no longer produces the value")
 }
+
+func TestProductionBucketsAndTablesAreCritical(t *testing.T) {
+	// A production data bucket with no versioning is as unrecoverable as a
+	// production database with no backups. The existing mechanism already
+	// expresses that, so it is reused rather than reinvented.
+	cases := []struct {
+		name string
+		typ  model.ResourceType
+		prod bool
+		want int
+	}{
+		{"production bucket is critical", model.TypeBucket, true, 2},
+		{"non-production bucket is not", model.TypeBucket, false, 1},
+		{"production table is critical", model.TypeTable, true, 2},
+		{"non-production table is not", model.TypeTable, false, 1},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := model.Resource{
+				Display: "data", Name: "data", Type: tc.typ,
+				Region: "us-east-1", Production: tc.prod,
+			}
+			s := Compute([]model.Finding{
+				{Resource: r, Check: model.CheckCoverage, Status: model.StatusFail},
+			})
+			require.Len(t, s.ResourceScores, 1)
+			assert.Equal(t, tc.want, s.ResourceScores[0].Weight)
+		})
+	}
+}
+
+func TestProductionBucketCoverageFailGetsTheCriticalBonus(t *testing.T) {
+	r := model.Resource{
+		Display: "customer-uploads", Name: "customer-uploads",
+		Type: model.TypeBucket, Region: "us-east-1", Production: true,
+	}
+	s := Compute([]model.Finding{
+		{Resource: r, Check: model.CheckCoverage, Status: model.StatusFail},
+	})
+	assert.Equal(t, WeightCoverageFail+WeightCoverageCriticalBonus, s.RawDeduction)
+}
+
+func TestNotApplicableChecksDeductNothing(t *testing.T) {
+	// S3 freshness and restore-testing are N/A. They must not deflate the
+	// score, and must not inflate it either — they are simply absent from the
+	// arithmetic, counted as moot.
+	r := model.Resource{
+		Display: "uploads", Name: "uploads",
+		Type: model.TypeBucket, Region: "us-east-1",
+	}
+	withNA := Compute([]model.Finding{
+		{Resource: r, Check: model.CheckCoverage, Status: model.StatusOK},
+		{Resource: r, Check: model.CheckImmutability, Status: model.StatusOK},
+		{Resource: r, Check: model.CheckRedundancy, Status: model.StatusOK},
+		{Resource: r, Check: model.CheckFreshness, Status: model.StatusSkipped},
+		{Resource: r, Check: model.CheckRestoreTested, Status: model.StatusSkipped},
+	})
+	assert.Equal(t, 100, withNA.Value)
+	assert.Equal(t, 3, withNA.Assessed)
+	assert.Equal(t, 2, withNA.Moot)
+	assert.Equal(t, 0, withNA.Blocked)
+	assert.Equal(t, 0, withNA.RawDeduction)
+}

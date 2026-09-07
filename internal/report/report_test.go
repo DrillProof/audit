@@ -325,6 +325,46 @@ func TestHTMLEscapesContent(t *testing.T) {
 	assert.Contains(t, buf.String(), "&lt;img", "resource names must be escaped")
 }
 
+func TestNotApplicableRendersDistinctlyFromNotAssessed(t *testing.T) {
+	// The two must never look alike. Telling a customer to grant a permission
+	// they already hold is a false statement about their estate.
+	result := &model.Result{
+		Findings: []model.Finding{
+			{
+				Resource: model.Resource{Display: "uploads (S3)", Type: model.TypeBucket, Region: "us-east-1"},
+				Check:    model.CheckFreshness, Status: model.StatusSkipped,
+				Summary: "not applicable (live bucket — no backup age to measure)",
+			},
+			{
+				Resource: model.Resource{Display: "uploads (S3)", Type: model.TypeBucket, Region: "us-east-1"},
+				Check:    model.CheckRedundancy, Status: model.StatusSkipped,
+				Summary: "not assessed (s3:GetBucketReplication denied)", SkipIsAccessGap: true,
+				SkipReason: "s3:GetBucketReplication denied",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	require.NoError(t, RenderHTML(&buf, result))
+	out := buf.String()
+	assert.Contains(t, out, "not applicable")
+	assert.Contains(t, out, "not assessed")
+	assert.Contains(t, out, "s3:GetBucketReplication")
+}
+
+func TestScopeAndMethodDocumentsTheBucketHierarchy(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderHTML(&buf, &model.Result{}))
+	out := buf.String()
+	for _, want := range []string{
+		"strongest", "strong", "partial", "weak", "unprotected",
+		"Object Lock", "not applicable",
+	} {
+		assert.Contains(t, out, want,
+			"Scope & method must explain the S3 protection hierarchy and which checks are N/A")
+	}
+}
+
 func TestFormatAccount(t *testing.T) {
 	assert.Equal(t, "1234-5678-9012", formatAccount("123456789012"))
 	assert.Equal(t, "short", formatAccount("short"), "non-12-digit ids pass through unchanged")

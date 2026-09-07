@@ -56,6 +56,9 @@ type globalFlags struct {
 	WarnAfter   time.Duration
 	FailAfter   time.Duration
 	Explain     bool
+	// BucketAllowList narrows S3 discovery to named buckets, for customers
+	// whose security team will not grant account-wide s3:ListAllMyBuckets.
+	BucketAllowList []string
 }
 
 var flags globalFlags
@@ -172,6 +175,8 @@ func newAuditCmd() *cobra.Command {
 	pf.BoolVar(&flags.Explain, "explain", false, "show how the score was calculated")
 	pf.DurationVar(&flags.WarnAfter, "warn-after", 24*time.Hour, "flag backups older than this as a warning")
 	pf.DurationVar(&flags.FailAfter, "fail-after", 7*24*time.Hour, "flag backups older than this as a failure")
+	pf.StringSliceVar(&flags.BucketAllowList, "bucket", nil,
+		"Limit S3 scanning to these buckets (repeatable). Use when your security team will not grant account-wide s3:ListAllMyBuckets.")
 
 	// Reserved for future clouds; AWS is the only valid value in v1, and the
 	// provider is auto-detected from the credential chain so nobody needs it.
