@@ -333,11 +333,12 @@ func (f *fakeDynamoDB) ListTagsOfResource(_ context.Context, in *dynamodb.ListTa
 // ---------------------------------------------------------------- fake EFS
 
 type fakeEFS struct {
-	filesystems []efstypes.FileSystemDescription
-	policy      map[string]efstypes.Status // by filesystem id
-	policyErr   error
-	replication map[string][]efstypes.Destination // by filesystem id
-	replErr     error
+	filesystems  []efstypes.FileSystemDescription
+	policy       map[string]efstypes.Status // by filesystem id
+	policyNilFor map[string]bool            // ids for which BackupPolicy itself is nil
+	policyErr    error
+	replication  map[string][]efstypes.Destination // by filesystem id
+	replErr      error
 }
 
 func (f *fakeEFS) DescribeFileSystems(_ context.Context, _ *efs.DescribeFileSystemsInput, _ ...func(*efs.Options)) (*efs.DescribeFileSystemsOutput, error) {
@@ -348,7 +349,11 @@ func (f *fakeEFS) DescribeBackupPolicy(_ context.Context, in *efs.DescribeBackup
 	if f.policyErr != nil {
 		return nil, f.policyErr
 	}
-	status, ok := f.policy[awssdk.ToString(in.FileSystemId)]
+	id := awssdk.ToString(in.FileSystemId)
+	if f.policyNilFor[id] {
+		return &efs.DescribeBackupPolicyOutput{BackupPolicy: nil}, nil
+	}
+	status, ok := f.policy[id]
 	if !ok {
 		return nil, &smithy.GenericAPIError{Code: "PolicyNotFound"}
 	}

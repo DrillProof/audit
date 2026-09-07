@@ -105,11 +105,17 @@ func readBackupPolicy(ctx context.Context, c Clients, id string, state *model.Ba
 	}
 	if out.BackupPolicy == nil {
 		p.AutomaticBackups = model.Unknown
+		state.MarkUnassessed(model.CheckCoverage, "elasticfilesystem:DescribeBackupPolicy returned no status")
 		return
 	}
 	switch out.BackupPolicy.Status {
 	case efstypes.StatusEnabled, efstypes.StatusEnabling:
 		p.AutomaticBackups = model.Yes
+	case efstypes.StatusDisabled, efstypes.StatusDisabling:
+		p.AutomaticBackups = model.No
+	case "":
+		p.AutomaticBackups = model.Unknown
+		state.MarkUnassessed(model.CheckCoverage, "elasticfilesystem:DescribeBackupPolicy returned no status")
 	default:
 		p.AutomaticBackups = model.No
 	}

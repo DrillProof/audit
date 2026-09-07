@@ -236,6 +236,12 @@ func TestEmitCheckFixtures(t *testing.T) {
 			s.EFS.AvailabilityZone = "us-east-1a"
 			return s
 		}()},
+		{"efs-one-zone-no-backup-no-az", oneZoneRes, func() *model.BackupState {
+			s := efsState(model.No, 0, noRepl)
+			s.EFS.OneZone = model.Yes
+			s.EFS.AvailabilityZone = ""
+			return s
+		}()},
 
 		// Each new permission denied is skipped with the action named.
 		{"efs-permission-denied", fsRes, func() *model.BackupState {

@@ -82,6 +82,44 @@ func TestFileSystemsDeniedBackupPolicyIsNotAssessed(t *testing.T) {
 		state.Unassessed[model.CheckCoverage])
 }
 
+func TestFileSystemsNilBackupPolicyIsUnassessedNotFail(t *testing.T) {
+	// A nil BackupPolicy (as opposed to PolicyNotFound) is not evidence
+	// backups are off — it's something we could not determine, and coverage
+	// must be skipped rather than failed.
+	c := Clients{Region: "us-east-1", EFS: &fakeEFS{
+		filesystems:  []efstypes.FileSystemDescription{fsDesc("fs-8", "murky", "")},
+		policyNilFor: map[string]bool{"fs-8": true},
+	}}
+
+	_, states, err := FileSystems(context.Background(), c)
+	require.NoError(t, err)
+	state := states["arn:aws:elasticfilesystem:us-east-1:111122223333:file-system/fs-8"]
+	require.NotNil(t, state)
+	assert.Equal(t, model.Unknown, state.EFS.AutomaticBackups)
+	assert.Equal(t,
+		"elasticfilesystem:DescribeBackupPolicy returned no status",
+		state.Unassessed[model.CheckCoverage])
+}
+
+func TestFileSystemsEmptyStatusIsUnassessedNotFail(t *testing.T) {
+	// A BackupPolicy with an empty Status is also not evidence backups are
+	// off; align with the nil-policy path and skip coverage rather than
+	// asserting No.
+	c := Clients{Region: "us-east-1", EFS: &fakeEFS{
+		filesystems: []efstypes.FileSystemDescription{fsDesc("fs-9", "blank-status", "")},
+		policy:      map[string]efstypes.Status{"fs-9": ""},
+	}}
+
+	_, states, err := FileSystems(context.Background(), c)
+	require.NoError(t, err)
+	state := states["arn:aws:elasticfilesystem:us-east-1:111122223333:file-system/fs-9"]
+	require.NotNil(t, state)
+	assert.Equal(t, model.Unknown, state.EFS.AutomaticBackups)
+	assert.Equal(t,
+		"elasticfilesystem:DescribeBackupPolicy returned no status",
+		state.Unassessed[model.CheckCoverage])
+}
+
 func TestFileSystemsReadsReplicationHealthAndRegion(t *testing.T) {
 	c := Clients{Region: "us-east-1", EFS: &fakeEFS{
 		filesystems: []efstypes.FileSystemDescription{fsDesc("fs-4", "replicated", "")},
