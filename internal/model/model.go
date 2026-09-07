@@ -14,12 +14,13 @@ import "time"
 type ResourceType string
 
 const (
-	TypeVolume    ResourceType = "volume"     // EBS
-	TypeDatabase  ResourceType = "database"   // RDS instance
-	TypeDBCluster ResourceType = "db-cluster" // RDS/Aurora cluster
-	TypeK8sState  ResourceType = "k8s-state"  // EKS cluster state / etcd
-	TypeBucket    ResourceType = "bucket"     // S3 bucket
-	TypeTable     ResourceType = "table"      // DynamoDB table
+	TypeVolume     ResourceType = "volume"      // EBS
+	TypeDatabase   ResourceType = "database"    // RDS instance
+	TypeDBCluster  ResourceType = "db-cluster"  // RDS/Aurora cluster
+	TypeK8sState   ResourceType = "k8s-state"   // EKS cluster state / etcd
+	TypeBucket     ResourceType = "bucket"      // S3 bucket
+	TypeTable      ResourceType = "table"       // DynamoDB table
+	TypeFileSystem ResourceType = "file-system" // EFS
 )
 
 // CheckID identifies one of the five checks. Stable API.
@@ -158,6 +159,43 @@ type DynamoProtection struct {
 	GlobalTableReplicas []string `json:"global_table_replicas,omitempty"`
 }
 
+// EFSReplicationState is what DescribeReplicationConfigurations told us.
+//
+// Health is carried separately from existence for the same reason S3 splits
+// Configured from EnabledRule: a replication that exists but sits in ERROR is
+// the EFS analogue of a silently failing backup schedule, and reporting it as
+// "replicated" would lose the finding most worth having.
+type EFSReplicationState struct {
+	// Configured is whether any replication configuration exists at all.
+	Configured Tristate `json:"configured"`
+	// Healthy is whether at least one destination is in a good state.
+	// Unknown when the status could not be read — never assumed healthy.
+	Healthy Tristate `json:"healthy"`
+	// CrossRegion is whether a destination is in another region.
+	CrossRegion Tristate `json:"cross_region"`
+	// DestRegions are the destination regions, for the finding text.
+	DestRegions []string `json:"dest_regions,omitempty"`
+}
+
+// EFSProtection is a filesystem's backup posture. Non-nil only when
+// Resource.Type is TypeFileSystem.
+type EFSProtection struct {
+	// AutomaticBackups is EFS's built-in backup policy — an AWS Backup
+	// default plan, separate from any user-defined plan. A filesystem with
+	// this on IS protected; flagging it would be the same class of false
+	// positive as failing a PITR-only DynamoDB table.
+	AutomaticBackups Tristate `json:"automatic_backups"`
+	// OneZone is whether the filesystem is single-AZ. A One Zone filesystem
+	// does not survive the loss of its availability zone.
+	OneZone Tristate `json:"one_zone"`
+	// AvailabilityZone is the AZ name for a One Zone filesystem, empty for a
+	// Regional one. Reported as context, not as a failure.
+	AvailabilityZone string `json:"availability_zone,omitempty"`
+	// Replication is EFS's own cross-region replication, distinct from an AWS
+	// Backup copy job.
+	Replication EFSReplicationState `json:"replication"`
+}
+
 // BackupState is everything the discovery layer learned about one resource's
 // backups. The checks read this and nothing else.
 type BackupState struct {
@@ -181,6 +219,8 @@ type BackupState struct {
 	S3 *S3Protection `json:"s3,omitempty"`
 	// Dynamo is the table continuous-backup posture. Nil for every other type.
 	Dynamo *DynamoProtection `json:"dynamo,omitempty"`
+	// EFS is the filesystem backup posture. Nil for every other type.
+	EFS *EFSProtection `json:"efs,omitempty"`
 	// Unassessed records why a given check could not run — keyed by check.
 	Unassessed map[CheckID]string
 	// Notes are extra facts worth surfacing in the report.

@@ -40,3 +40,29 @@ func TestPITRDefaultsToUnknown(t *testing.T) {
 	d := DynamoProtection{}
 	assert.Equal(t, Unknown, d.PITR)
 }
+
+func TestFileSystemTypeAndProtection(t *testing.T) {
+	// The wire string is public API: it appears in JSON, SARIF, and the
+	// control plane's own model. A rename is a breaking change in two
+	// products at once.
+	assert.Equal(t, ResourceType("file-system"), TypeFileSystem)
+
+	s := NewBackupState()
+	s.EFS = &EFSProtection{
+		AutomaticBackups: Yes,
+		OneZone:          No,
+		Replication: EFSReplicationState{
+			Configured:  Yes,
+			Healthy:     Yes,
+			CrossRegion: Yes,
+			DestRegions: []string{"us-west-2"},
+		},
+	}
+
+	// Unknown must survive round-tripping: an unreadable replication health
+	// is not "healthy", and collapsing it would be a false statement.
+	s.EFS.Replication.Healthy = Unknown
+	assert.Equal(t, "unknown", s.EFS.Replication.Healthy.String())
+	assert.Nil(t, s.Dynamo)
+	assert.Nil(t, s.S3)
+}
