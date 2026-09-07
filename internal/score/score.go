@@ -208,7 +208,7 @@ func weigh(f model.Finding) (int, string) {
 		}
 		points := WeightCoverageFail
 		reason := "no backup exists"
-		if isCritical(f.Resource) {
+		if criticalForCoverage(f.Resource) {
 			points += WeightCoverageCriticalBonus
 			reason = "no backup exists for critical resource"
 		}
@@ -252,7 +252,27 @@ func isCritical(r model.Resource) bool {
 	return r.Production && (r.Type == model.TypeDatabase ||
 		r.Type == model.TypeDBCluster ||
 		r.Type == model.TypeBucket ||
-		r.Type == model.TypeTable)
+		r.Type == model.TypeTable ||
+		r.Type == model.TypeFileSystem)
+}
+
+// criticalForCoverage widens isCritical for the coverage bonus alone.
+//
+// A One Zone EFS filesystem with no backup is a compounding risk: single-AZ
+// durability AND no recovery path. It earns the same bonus a production
+// database does — but only here. It deliberately does NOT change the
+// resource's weight in the estate mean, because a One Zone filesystem that IS
+// backed up is a legitimate cost decision and must not be penalised for its
+// storage class (spec §2.2).
+func criticalForCoverage(r model.Resource) bool {
+	return isCritical(r) || oneZoneFileSystem(r)
+}
+
+// oneZoneFileSystem reads the storage class discovery recorded on the
+// resource. The scorer only ever sees findings, so the class has to travel on
+// the resource rather than on the backup state.
+func oneZoneFileSystem(r model.Resource) bool {
+	return r.Type == model.TypeFileSystem && r.Attrs["storage_class"] == "one-zone"
 }
 
 // Explain renders the score arithmetic as lines suitable for a report or
