@@ -36,9 +36,17 @@ func resolveKeys(ctx context.Context, p Provider, accountID string, arns []strin
 	}
 	sort.Strings(distinct) // deterministic output; the table order must not depend on AWS
 
-	c := p.For(region)
 	for _, arn := range distinct {
 		k := model.RecoveryPointKey{KeyARN: arn, CrossAccount: keyOwnership(accountID, arn)}
+
+		// A cross-region AWS Backup copy's recovery point is encrypted with a
+		// key in the *destination* region, not the resource's own region. The
+		// ARN carries that region in field 3, so the client must be chosen per
+		// key — describing every key with the resource's regional endpoint
+		// would return NotFoundException for an out-of-region key and record a
+		// perfectly-live key as "Deleted", the worst false positive this check
+		// can produce.
+		c := p.For(keyRegion(arn, region))
 
 		keyID := arn
 		out, err := c.KMS.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: &keyID})
@@ -68,6 +76,29 @@ func resolveKeys(ctx context.Context, p Provider, accountID string, arns []strin
 	}
 }
 
+// arnField returns field idx of a colon-delimited ARN (0="arn", 1=partition,
+// 2=service, 3=region, 4=account, 5+=resource), and whether it was present and
+// non-empty. Shared by every caller that needs to pick a field out of an ARN
+// so there is exactly one guarded splitter, not several subtly different ones.
+func arnField(arn string, idx int) (string, bool) {
+	parts := strings.Split(arn, ":")
+	if len(parts) <= idx || parts[idx] == "" {
+		return "", false
+	}
+	return parts[idx], true
+}
+
+// keyRegion returns the region a key ARN names (field 3), falling back to
+// fallback when the ARN is unparsable or the field is empty — which leaves an
+// unparsable ARN exactly as unreadable as it already was, since it will still
+// land in resolveKeys' default branch.
+func keyRegion(arn, fallback string) string {
+	if r, ok := arnField(arn, 3); ok {
+		return r
+	}
+	return fallback
+}
+
 // keyOwnership reports whether a key ARN belongs to the account being scanned.
 //
 // Unknown when the scanned account id could not be resolved — GetCallerIdentity
@@ -78,11 +109,11 @@ func keyOwnership(accountID, arn string) model.Tristate {
 	if accountID == "" || accountID == "unknown" {
 		return model.Unknown
 	}
-	parts := strings.Split(arn, ":")
-	if len(parts) < 5 || parts[4] == "" {
+	acct, ok := arnField(arn, 4)
+	if !ok {
 		return model.Unknown
 	}
-	if parts[4] == accountID {
+	if acct == accountID {
 		return model.No
 	}
 	return model.Yes

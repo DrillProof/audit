@@ -434,12 +434,23 @@ func (f *fakeKMS) DescribeKey(_ context.Context, in *kms.DescribeKeyInput, _ ...
 // providerWithKMS is a single-region (us-east-1) fake provider for
 // resolveKeys tests, where only the KMS client matters.
 func providerWithKMS(k KMSAPI) *fakeProvider {
+	return providerWithKMSRegions(map[string]KMSAPI{"us-east-1": k})
+}
+
+// providerWithKMSRegions is a multi-region fake provider for resolveKeys
+// tests that need to see which region's client a call actually went through —
+// the cross-region key case, where the key's own region differs from the
+// resource's. Each region gets its own KMS fake, so a test can assert on one
+// fake's call count while another's stays at zero.
+func providerWithKMSRegions(byRegion map[string]KMSAPI) *fakeProvider {
+	perRegion := make(map[string]Clients, len(byRegion))
+	for region, k := range byRegion {
+		perRegion[region] = Clients{Region: region, KMS: k}
+	}
 	return &fakeProvider{
-		base: "us-east-1",
-		sts:  &fakeSTS{account: "111122223333"},
-		perRegion: map[string]Clients{
-			"us-east-1": {Region: "us-east-1", KMS: k},
-		},
+		base:      "us-east-1",
+		sts:       &fakeSTS{account: "111122223333"},
+		perRegion: perRegion,
 	}
 }
 

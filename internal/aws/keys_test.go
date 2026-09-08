@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/drillproof/audit/internal/model"
 )
 
@@ -102,6 +104,67 @@ func TestResolveKeys(t *testing.T) {
 		if s.Keys[0].CrossAccount != model.Unknown {
 			t.Fatalf("CrossAccount = %v, want Unknown", s.Keys[0].CrossAccount)
 		}
+	})
+
+	t.Run("cross-region key is described against its own region, not the resource's", func(t *testing.T) {
+		crossRegion := "arn:aws:kms:eu-west-1:111122223333:key/xr"
+		resourceRegionKMS := &fakeKMS{states: map[string]kmsFakeKey{
+			// Deliberately empty: describing this ARN via us-east-1 would be
+			// the bug. If it happens, this fake reports "no such key" and the
+			// test fails on state, not just on call count.
+		}}
+		keyRegionKMS := &fakeKMS{states: map[string]kmsFakeKey{
+			crossRegion: {state: "Enabled", manager: "CUSTOMER"},
+		}}
+		p := providerWithKMSRegions(map[string]KMSAPI{
+			"us-east-1": resourceRegionKMS,
+			"eu-west-1": keyRegionKMS,
+		})
+		s := model.NewBackupState()
+		resolveKeys(context.Background(), p, self, []string{crossRegion}, "us-east-1", s)
+
+		if resourceRegionKMS.calls != 0 {
+			t.Fatalf("resource-region (us-east-1) KMS client was called %d times, want 0", resourceRegionKMS.calls)
+		}
+		if keyRegionKMS.calls != 1 {
+			t.Fatalf("key-region (eu-west-1) KMS client was called %d times, want 1", keyRegionKMS.calls)
+		}
+		if s.Keys[0].State != "Enabled" {
+			t.Fatalf("state = %q, want Enabled — a cross-region key must not be misreported as Deleted", s.Keys[0].State)
+		}
+	})
+
+	t.Run("cross-region key does not get reported as Deleted by a wrong-region lookup", func(t *testing.T) {
+		// Regression guard for the actual bug: describing a cross-region key
+		// via the resource's region returns NotFoundException, which
+		// resolveKeys correctly treats as "Deleted" — but only correctly if
+		// the lookup actually happened in the key's own region.
+		crossRegion := "arn:aws:kms:eu-west-1:111122223333:key/xr"
+		p := providerWithKMSRegions(map[string]KMSAPI{
+			"us-east-1": &fakeKMS{}, // would 404 if ever asked
+			"eu-west-1": &fakeKMS{states: map[string]kmsFakeKey{
+				crossRegion: {state: "Enabled", manager: "CUSTOMER"},
+			}},
+		})
+		s := model.NewBackupState()
+		resolveKeys(context.Background(), p, self, []string{crossRegion}, "us-east-1", s)
+		if s.Keys[0].State == "Deleted" {
+			t.Fatal("cross-region key reported Deleted — it was described against the wrong region's endpoint")
+		}
+	})
+
+	t.Run("an ARN with a missing region field falls back to the resource region", func(t *testing.T) {
+		malformed := "not-an-arn"
+		p := providerWithKMS(&fakeKMS{states: map[string]kmsFakeKey{
+			malformed: {state: "Enabled", manager: "CUSTOMER"},
+		}})
+		require.NotPanics(t, func() {
+			s := model.NewBackupState()
+			resolveKeys(context.Background(), p, self, []string{malformed}, "us-east-1", s)
+			if s.Keys[0].State != "Enabled" {
+				t.Fatalf("state = %q, want Enabled via fallback region", s.Keys[0].State)
+			}
+		})
 	})
 
 	t.Run("duplicate ARNs are described once", func(t *testing.T) {
