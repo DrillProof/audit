@@ -32,6 +32,7 @@ package score
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/drillproof/audit/internal/model"
 )
@@ -49,6 +50,17 @@ const (
 	WeightFreshnessWarn    = 4
 	WeightRedundancyFail   = 6
 	WeightRestoreUntested  = 5
+
+	// A key that is deleted or scheduled for deletion makes the backup
+	// unrecoverable, exactly as having no backup does. It therefore zeroes the
+	// resource rather than deducting from it — but it still carries a point
+	// value, because both scorers skip a finding whose weight is zero and the
+	// penalty must appear in the printed breakdown.
+	WeightKeyUnrecoverable = 25
+	// Disabled or missing key material: real, but the customer can fix it today.
+	WeightKeyUnavailableFail = 15
+	// A key in someone else's account works until it doesn't. Advisory.
+	WeightKeyCrossAccountWarn = 3
 )
 
 // PerfectScore is the ceiling.
@@ -70,6 +82,7 @@ func Compute(findings []model.Finding) model.Score {
 	type acc struct {
 		resource     model.Resource
 		coverageFail bool
+		keyFatal     bool
 		deduction    int
 	}
 	byResource := map[string]*acc{}
@@ -111,11 +124,15 @@ func Compute(findings []model.Finding) model.Score {
 		s.RawDeduction += points
 
 		// Coverage is existence: failing it makes the resource unrecoverable,
-		// so it zeroes the resource rather than deducting from it. Every other
-		// gap is a quality gap against a backup that does exist.
-		if f.Check == model.CheckCoverage {
+		// so it zeroes the resource rather than deducting from it. A key that
+		// is gone has exactly the same consequence — the recovery points are
+		// there and cannot be read — so it uses the same mechanism.
+		switch {
+		case f.Check == model.CheckCoverage:
 			a.coverageFail = true
-		} else {
+		case f.Check == model.CheckKeyAvailability && points == WeightKeyUnrecoverable:
+			a.keyFatal = true
+		default:
 			a.deduction += points
 		}
 	}
@@ -133,7 +150,7 @@ func Compute(findings []model.Finding) model.Score {
 		a := byResource[key]
 
 		value := PerfectScore - a.deduction
-		if a.coverageFail {
+		if a.coverageFail || a.keyFatal {
 			value = 0
 		}
 		if value < 0 {
@@ -238,6 +255,22 @@ func weigh(f model.Finding) (int, string) {
 	case model.CheckRestoreTested:
 		if f.Status == model.StatusFail {
 			return WeightRestoreUntested, "never test-restored"
+		}
+		return 0, ""
+
+	case model.CheckKeyAvailability:
+		switch f.Status {
+		case model.StatusFail:
+			// The summary is the only place the key's state survives into the
+			// scorer, and the two outcomes carry different consequences: one
+			// is unrecoverable, the other is a re-enable away.
+			if strings.Contains(f.Summary, "no longer exists") ||
+				strings.Contains(f.Summary, "scheduled for deletion") {
+				return WeightKeyUnrecoverable, "backups are encrypted with a KMS key that is gone or being deleted"
+			}
+			return WeightKeyUnavailableFail, "backups are encrypted with a KMS key that cannot currently decrypt them"
+		case model.StatusWarn:
+			return WeightKeyCrossAccountWarn, "backups depend on a KMS key in another account"
 		}
 		return 0, ""
 	}
