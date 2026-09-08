@@ -119,12 +119,26 @@ func KeyAvailability(r model.Resource, s *model.BackupState, cfg Config) model.F
 		return f
 
 	case rankUnreadable:
-		if worst.CrossAccount == model.Unknown {
+		switch worst.CrossAccount {
+		case model.Yes:
+			// A real, actionable permission gap in another account.
+			return blocked(r, model.CheckKeyAvailability,
+				fmt.Sprintf("cross-account key %s could not be described — kms:DescribeKey in the owning account", short(worst.KeyARN)))
+		case model.Unknown:
 			return moot(r, model.CheckKeyAvailability,
 				fmt.Sprintf("could not determine which account owns %s", short(worst.KeyARN)))
+		default:
+			// Same account, state unreadable for some other reason (a
+			// throttle, a 5xx, a malformed ARN) — resolveKeys' default branch
+			// deliberately leaves State empty without marking Unassessed. A
+			// genuine kms:DescribeKey denial never reaches here: it is caught
+			// by the Unassessed lookup at the top of this function. This is
+			// therefore not an access gap, and there is no "owning account"
+			// to send the customer to — saying either would be a false
+			// statement about their estate.
+			return moot(r, model.CheckKeyAvailability,
+				fmt.Sprintf("the state of %s could not be determined", short(worst.KeyARN)))
 		}
-		return blocked(r, model.CheckKeyAvailability,
-			fmt.Sprintf("cross-account key %s could not be described — kms:DescribeKey in the owning account", short(worst.KeyARN)))
 
 	case rankCrossAccountOK:
 		f.Status = model.StatusWarn

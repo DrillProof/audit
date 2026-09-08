@@ -164,6 +164,30 @@ func TestKeyAvailabilityHonesty(t *testing.T) {
 			t.Fatalf("reason should say why: %q", f.SkipReason)
 		}
 	})
+
+	t.Run("a same-account key that could not be read is moot, not an access gap", func(t *testing.T) {
+		// State == "" with CrossAccount == No: resolveKeys' default branch
+		// (throttle, 5xx, malformed ARN) — never a permission denial, since a
+		// genuine denial is caught by the Unassessed lookup above and never
+		// reaches classify() at all. Must not be reported as cross-account
+		// (there is no other account) and must not be reported as an access
+		// gap (the customer already holds every permission that matters).
+		unreadable := model.RecoveryPointKey{
+			KeyARN:       "arn:aws:kms:us-east-1:111122223333:key/abc",
+			State:        "",
+			CrossAccount: model.No,
+		}
+		f := KeyAvailability(keyRes(), stateWithKeys(unreadable), cfg)
+		if f.Status != model.StatusSkipped {
+			t.Fatalf("want skipped, got %q", f.Status)
+		}
+		if f.SkipIsAccessGap {
+			t.Fatalf("want SkipIsAccessGap = false, got true — a same-account read failure is not a permission gap")
+		}
+		if strings.Contains(f.Summary, "cross-account") || strings.Contains(f.Summary, "owning account") {
+			t.Fatalf("summary must not claim another account is involved: %q", f.Summary)
+		}
+	})
 }
 
 func TestRunReturnsSixChecks(t *testing.T) {

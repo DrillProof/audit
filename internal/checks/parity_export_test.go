@@ -290,6 +290,23 @@ func TestEmitCheckFixtures(t *testing.T) {
 		{"key-unencrypted-backups", keyRes, withKeys()},
 		{"key-no-backup-at-all", keyRes, model.NewBackupState()},
 		{"key-worst-of-three-wins", keyRes, withKeys(custKey("Enabled"), custKey("Disabled"), custKey("Enabled"))},
+
+		// kms:DescribeKey denied ⇒ SKIPPED + skipIsAccessGap + the action
+		// named, never a FAIL. Mirrors s3-permission-denied,
+		// dynamo-permission-denied, efs-permission-denied.
+		{"key-permission-denied", keyRes, func() *model.BackupState {
+			s := withKeys(custKey("Enabled"))
+			s.MarkUnassessed(model.CheckKeyAvailability, "kms:DescribeKey denied")
+			return s
+		}()},
+
+		// Same-account key whose state could not be read (throttle, 5xx,
+		// malformed ARN — resolveKeys' default branch, never a permission
+		// denial). Must be moot, not an access gap, and must not claim
+		// cross-account.
+		{"key-same-account-unreadable", keyRes, withKeys(model.RecoveryPointKey{
+			KeyARN: "arn:aws:kms:us-east-1:111122223333:key/abc", State: "", CrossAccount: model.No,
+		})},
 	}
 
 	type outCase struct {
