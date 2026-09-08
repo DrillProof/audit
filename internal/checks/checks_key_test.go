@@ -190,6 +190,37 @@ func TestKeyAvailabilityHonesty(t *testing.T) {
 	})
 }
 
+// TestSummariesCarryTheSubstringsTheScorerMatches guards the coupling
+// between this check and internal/score/score.go's weigh(), which decides
+// whether a KEY_AVAILABILITY finding is fatal (zeroes the resource) or
+// merely bad by substring-matching this check's Summary prose — it does not
+// look at the rank computed above. The golden fixtures cannot catch a
+// reworded summary because they are regenerated from this same code, so a
+// reword plus a fixture regen passes green even though it silently changes
+// scoring. Whoever breaks this test must update weigh() in BOTH the Go and
+// TypeScript scorers, not just adjust the test.
+func TestSummariesCarryTheSubstringsTheScorerMatches(t *testing.T) {
+	cfg := Config{Now: time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)}
+
+	deleted := KeyAvailability(keyRes(), stateWithKeys(inAccount("Deleted")), cfg)
+	if !strings.Contains(deleted.Summary, "no longer exists") {
+		t.Fatalf("Deleted summary must contain %q (score.go matches on it): %q", "no longer exists", deleted.Summary)
+	}
+
+	pendingDeletion := KeyAvailability(keyRes(), stateWithKeys(inAccount("PendingDeletion")), cfg)
+	if !strings.Contains(pendingDeletion.Summary, "scheduled for deletion") {
+		t.Fatalf("PendingDeletion summary must contain %q (score.go matches on it): %q", "scheduled for deletion", pendingDeletion.Summary)
+	}
+
+	// Converse: a Disabled key is bad but recoverable, and must NOT trip
+	// either fatal substring — an accidental reword INTO one of these
+	// phrases would silently zero a recoverable resource's score.
+	disabled := KeyAvailability(keyRes(), stateWithKeys(inAccount("Disabled")), cfg)
+	if strings.Contains(disabled.Summary, "no longer exists") || strings.Contains(disabled.Summary, "scheduled for deletion") {
+		t.Fatalf("Disabled summary must not contain either fatal substring: %q", disabled.Summary)
+	}
+}
+
 func TestRunReturnsSixChecks(t *testing.T) {
 	got := Run(keyRes(), stateWithKeys(inAccount("Enabled")), DefaultConfig())
 	if len(got) != 6 {
