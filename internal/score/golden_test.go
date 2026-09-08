@@ -243,6 +243,37 @@ func TestEmitGoldenFixtures(t *testing.T) {
 			f(devBucket, model.CheckImmutability, model.StatusSkipped, true),
 			f(devBucket, model.CheckRedundancy, model.StatusSkipped, true),
 		}},
+
+		// KeyAvailability: a deleted/pending-deletion key is fatal (zeroes the
+		// resource via keyFatal, like coverageFail does), a disabled/missing
+		// key is a plain 15-point deduction, and a cross-account key is an
+		// advisory 3-point warn.
+		{Name: "key-fatal-deleted", Findings: []model.Finding{
+			f(vol, model.CheckCoverage, model.StatusOK, false),
+			{Resource: vol, Check: model.CheckKeyAvailability, Status: model.StatusFail,
+				Summary: "the KMS key protecting these recovery points no longer exists (key/abc; 1 key(s)) — they cannot be restored"},
+		}},
+		{Name: "key-disabled-fail", Findings: []model.Finding{
+			f(vol, model.CheckCoverage, model.StatusOK, false),
+			{Resource: vol, Check: model.CheckKeyAvailability, Status: model.StatusFail,
+				Summary: "the KMS key protecting these recovery points is disabled (key/abc; 1 key(s)) — a restore will fail until it is re-enabled"},
+		}},
+		{Name: "key-cross-account-warn", Findings: []model.Finding{
+			f(vol, model.CheckCoverage, model.StatusOK, false),
+			{Resource: vol, Check: model.CheckKeyAvailability, Status: model.StatusWarn,
+				Summary: "these recovery points depend on a KMS key in another account (key/x; 1 key(s)) — the owning account can revoke access without warning"},
+		}},
+
+		// The required interaction case: coverage FAIL and a fatal key FAIL
+		// on the SAME resource. Both flags zero the resource independently
+		// (coverageFail || keyFatal), so this must score 0 exactly once, not
+		// be double-penalised — and RawDeduction still carries both points'
+		// worth of arithmetic for the printed breakdown.
+		{Name: "coverage-fail-and-key-fatal-no-double-penalty", Findings: []model.Finding{
+			f(prodDB, model.CheckCoverage, model.StatusFail, false),
+			{Resource: prodDB, Check: model.CheckKeyAvailability, Status: model.StatusFail,
+				Summary: "the KMS key protecting these recovery points is scheduled for deletion on 2026-09-14, 6 day(s) from now (key/abc; 1 key(s))"},
+		}},
 	}
 
 	for i := range cases {

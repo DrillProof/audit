@@ -126,6 +126,15 @@ func TestTableMatchesSpecShape(t *testing.T) {
 	assert.Contains(t, out, "drillproof audit init")
 }
 
+func TestTableHasKeyAvailabilityColumn(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderTable(&buf, sample(), tableOpts()))
+	out := buf.String()
+	if !strings.Contains(out, "KEY") {
+		t.Fatalf("table is missing the key availability column:\n%s", out)
+	}
+}
+
 func TestTableShowsFailedRestoreForUnbackedResource(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, RenderTable(&buf, sample(), tableOpts()))
