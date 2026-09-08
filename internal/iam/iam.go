@@ -179,11 +179,16 @@ func Terraform() (string, error) {
 		return "", err
 	}
 	indented := indent(policy, "  ")
+	explanation := commentBlock(Explanation(), "# ")
 
 	return fmt.Sprintf(`# DrillProof audit — least-privilege, read-only.
 #
 # Every action below is a Describe/List/Get. This role cannot create, modify,
 # restore, or delete anything.
+#
+# What each permission is for:
+#
+%[3]s
 #
 #   terraform apply
 #   AWS_PROFILE=... drillproof audit scan
@@ -236,10 +241,15 @@ output "audit_role_arn" {
   value       = aws_iam_role.%[2]s.arn
   description = "Pass to the auditor, or assume locally before running the scan."
 }
-`, indented, PolicyName), nil
+`, indented, PolicyName, explanation), nil
 }
 
 // CloudFormation emits the same role for teams not using Terraform.
+//
+// CloudFormation's Description field has a hard 1024-character limit, so the
+// per-statement explanation only goes there if it fits; otherwise it goes in
+// a comment block above Resources, where a reviewer reading the file still
+// sees it.
 func CloudFormation() (string, error) {
 	policy := BuildPolicy()
 	statements, err := json.MarshalIndent(policy.Statement, "          ", "  ")
@@ -247,10 +257,20 @@ func CloudFormation() (string, error) {
 		return "", err
 	}
 
+	const shortDescription = "Read-only role for the DrillProof recoverability audit"
+	explanationSentence := explanationProse()
+	description := shortDescription
+	explanationComment := ""
+	if len(shortDescription+". What each permission is for: "+explanationSentence) <= 1024 {
+		description = fmt.Sprintf("Description: >-\n  %s. What each permission is for: %s\n", shortDescription, explanationSentence)
+	} else {
+		description = fmt.Sprintf("Description: %s\n", shortDescription)
+		explanationComment = "\n# What each permission is for:\n" + commentBlock(Explanation(), "# ") + "\n"
+	}
+
 	return fmt.Sprintf(`# DrillProof audit — least-privilege, read-only.
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Read-only role for the DrillProof recoverability audit
-
+%[3]s
 Parameters:
   TrustedPrincipal:
     Type: String
@@ -259,7 +279,7 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Shared secret required on AssumeRole
-
+%[4]s
 Resources:
   DrillProofAuditRole:
     Type: AWS::IAM::Role
@@ -284,7 +304,18 @@ Resources:
 Outputs:
   AuditRoleArn:
     Value: !GetAtt DrillProofAuditRole.Arn
-`, string(statements), PolicyName), nil
+`, string(statements), PolicyName, description, explanationComment), nil
+}
+
+// explanationProse renders Explanation as a single flowing sentence fragment,
+// suitable for embedding in prose (e.g. CloudFormation's Description field)
+// rather than as aligned comment columns.
+func explanationProse() string {
+	var parts []string
+	for _, g := range actionGroups {
+		parts = append(parts, fmt.Sprintf("%s: %s", g.sid, g.purpose))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // KubernetesRBAC emits the read-only ClusterRole for the optional EKS/Velero
@@ -324,6 +355,16 @@ subjects:
     name: CHANGE_ME  # the identity that will run the audit
     apiGroup: rbac.authorization.k8s.io
 `
+}
+
+// commentBlock renders lines as a comment block, each prefixed with prefix,
+// so the caller stays valid HCL/YAML.
+func commentBlock(lines []string, prefix string) string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = prefix + l
+	}
+	return strings.Join(out, "\n")
 }
 
 func indent(s, prefix string) string {
