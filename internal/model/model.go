@@ -23,7 +23,7 @@ const (
 	TypeFileSystem ResourceType = "file-system" // EFS
 )
 
-// CheckID identifies one of the five checks. Stable API.
+// CheckID identifies one of the six checks. Stable API.
 type CheckID string
 
 const (
@@ -32,6 +32,11 @@ const (
 	CheckImmutability  CheckID = "immutability"
 	CheckRedundancy    CheckID = "redundancy"
 	CheckRestoreTested CheckID = "restore-testing"
+	// CheckKeyAvailability asks whether the KMS keys protecting this
+	// resource's recovery points are still present and enabled. A backup
+	// encrypted with a deleted key cannot be restored, and every other check
+	// passes it — which is why this is a check and not a note.
+	CheckKeyAvailability CheckID = "key-availability"
 )
 
 // AllChecks is the canonical order checks run and render in.
@@ -41,6 +46,7 @@ var AllChecks = []CheckID{
 	CheckImmutability,
 	CheckRedundancy,
 	CheckRestoreTested,
+	CheckKeyAvailability,
 }
 
 // Status is a check outcome.
@@ -196,6 +202,30 @@ type EFSProtection struct {
 	Replication EFSReplicationState `json:"replication"`
 }
 
+// RecoveryPointKey is one KMS key protecting a resource's recovery points.
+//
+// Deliberately the *backup's* key, not the live resource's: restoring a
+// snapshot needs the key the snapshot was written with, and the two diverge
+// whenever a resource is re-encrypted after a backup was taken.
+type RecoveryPointKey struct {
+	// KeyARN is the key as the recovery point reported it.
+	KeyARN string `json:"key_arn"`
+	// State is KeyMetadata.KeyState verbatim ("Enabled", "Disabled",
+	// "PendingDeletion", "PendingImport", "Unavailable"). Empty when the key
+	// could not be described — see CrossAccount and the Unassessed reason.
+	State string `json:"state,omitempty"`
+	// AWSManaged is KeyMetadata.KeyManager == "AWS". An AWS-managed key
+	// cannot be disabled or deleted by the customer, so it never fails.
+	AWSManaged bool `json:"aws_managed,omitempty"`
+	// CrossAccount is whether the key lives in another account. Unknown when
+	// the scanned account's own id could not be resolved — in that case the
+	// check must skip rather than assume same-account.
+	CrossAccount Tristate `json:"cross_account"`
+	// DeletionDate is set only for State == "PendingDeletion". The countdown
+	// is the whole value of that finding.
+	DeletionDate *time.Time `json:"deletion_date,omitempty"`
+}
+
 // BackupState is everything the discovery layer learned about one resource's
 // backups. The checks read this and nothing else.
 type BackupState struct {
@@ -221,6 +251,10 @@ type BackupState struct {
 	Dynamo *DynamoProtection `json:"dynamo,omitempty"`
 	// EFS is the filesystem backup posture. Nil for every other type.
 	EFS *EFSProtection `json:"efs,omitempty"`
+	// Keys are the KMS keys protecting this resource's recovery points. Empty
+	// means the backups are unencrypted, which is not a finding — it is
+	// nothing to assess.
+	Keys []RecoveryPointKey `json:"keys,omitempty"`
 	// Unassessed records why a given check could not run — keyed by check.
 	Unassessed map[CheckID]string
 	// Notes are extra facts worth surfacing in the report.

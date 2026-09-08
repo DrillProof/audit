@@ -66,3 +66,33 @@ func TestFileSystemTypeAndProtection(t *testing.T) {
 	assert.Nil(t, s.Dynamo)
 	assert.Nil(t, s.S3)
 }
+
+func TestKeyAvailabilityIsACheck(t *testing.T) {
+	if CheckKeyAvailability != "key-availability" {
+		t.Fatalf("wire value changed: %q", CheckKeyAvailability)
+	}
+	found := false
+	for _, c := range AllChecks {
+		if c == CheckKeyAvailability {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("CheckKeyAvailability missing from AllChecks")
+	}
+	if len(AllChecks) != 6 {
+		t.Fatalf("expected 6 checks, got %d", len(AllChecks))
+	}
+}
+
+func TestBackupStateCarriesKeys(t *testing.T) {
+	s := NewBackupState()
+	s.Keys = []RecoveryPointKey{{
+		KeyARN:       "arn:aws:kms:us-east-1:111122223333:key/abc",
+		State:        "Enabled",
+		CrossAccount: No,
+	}}
+	if s.Keys[0].AWSManaged {
+		t.Fatal("AWSManaged should default false")
+	}
+}
