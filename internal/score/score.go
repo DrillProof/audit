@@ -130,6 +130,11 @@ func Compute(findings []model.Finding) model.Score {
 		switch {
 		case f.Check == model.CheckCoverage:
 			a.coverageFail = true
+		// WeightCoverageFail is also 25 — the check-id guard, not the point
+		// value, is what separates a fatal key from a merely-25-point
+		// deduction. If a future weight change ever makes WeightKeyUnrecoverable
+		// collide with some other check's weight, this case must not fire for
+		// that check too; do not drop the f.Check == ... half of this guard.
 		case f.Check == model.CheckKeyAvailability && points == WeightKeyUnrecoverable:
 			a.keyFatal = true
 		default:

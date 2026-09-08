@@ -115,7 +115,7 @@ var actionGroups = []struct {
 	},
 	{
 		sid:     "KeyState",
-		purpose: "read whether the KMS keys protecting recovery points are still enabled",
+		purpose: "read KMS key state (enabled/disabled/pending deletion) so DrillProof can tell you when a backup can no longer be decrypted — never accesses key material and never attempts decryption",
 		actions: []string{"kms:DescribeKey"},
 	},
 }

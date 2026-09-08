@@ -35,6 +35,8 @@ func RenderHTML(w io.Writer, result *model.Result) error {
 		CrossCls   string
 		Restore    string
 		RestoreCls string
+		Key        string
+		KeyCls     string
 	}
 
 	data := struct {
@@ -78,6 +80,8 @@ func RenderHTML(w io.Writer, result *model.Result) error {
 			CrossCls:   cls(row.Statuses[model.CheckRedundancy]),
 			Restore:    restoreCell(row),
 			RestoreCls: cls(row.Statuses[model.CheckRestoreTested]),
+			Key:        keyCell(row),
+			KeyCls:     cls(row.Statuses[model.CheckKeyAvailability]),
 		})
 	}
 
@@ -211,7 +215,7 @@ const htmlTemplate = `<!doctype html>
   <table>
     <thead><tr>
       <th>Resource</th><th>Type</th><th>Region</th><th>Backup</th>
-      <th>Age</th><th>Immutable</th><th>X-Region</th><th>Restore</th>
+      <th>Age</th><th>Immutable</th><th>X-Region</th><th>Restore</th><th>Key</th>
     </tr></thead>
     <tbody>
       {{range .Rows}}
@@ -221,6 +225,7 @@ const htmlTemplate = `<!doctype html>
         <td class="{{.ImmutCls}}">{{.Immutable}}</td>
         <td class="{{.CrossCls}}">{{.CrossReg}}</td>
         <td class="{{.RestoreCls}}">{{.Restore}}</td>
+        <td class="{{.KeyCls}}">{{.Key}}</td>
       </tr>
       {{end}}
     </tbody>
@@ -277,7 +282,7 @@ const htmlTemplate = `<!doctype html>
   </ul>
 
   <h3>EFS coverage and redundancy</h3>
-  <p>EFS is protected by AWS Backup, so all five checks apply. Two of them
+  <p>EFS is protected by AWS Backup, so all six checks apply. Two of them
   accept more than one path, because both are genuine:</p>
   <ul>
     <li><strong>Coverage</strong> — either EFS <em>automatic backups</em> (the

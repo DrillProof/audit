@@ -69,6 +69,16 @@ func KeyAvailability(r model.Resource, s *model.BackupState, cfg Config) model.F
 	// A resource with no backup is already zeroed by coverage. Deducting here
 	// too would penalise the same gap twice.
 	if s.RecoveryPoints == 0 {
+		// For S3/DynamoDB/EFS, zero AWS Backup recovery points does not mean
+		// unprotected — Object Lock, PITR, and automatic backups all protect
+		// without ever creating one. Saying "no backup exists" here would
+		// directly contradict a Coverage finding of OK for the same
+		// resource, so these three types get the honest, narrower reason:
+		// there are no recovery points whose key we could check.
+		switch r.Type {
+		case model.TypeBucket, model.TypeTable, model.TypeFileSystem:
+			return moot(r, model.CheckKeyAvailability, "no AWS Backup recovery points to check a key against")
+		}
 		return moot(r, model.CheckKeyAvailability, "no backup exists to decrypt")
 	}
 	if len(s.Keys) == 0 {
@@ -83,6 +93,9 @@ func KeyAvailability(r model.Resource, s *model.BackupState, cfg Config) model.F
 	}
 
 	count := fmt.Sprintf("%d key(s)", len(s.Keys))
+	if others := otherKeys(s.Keys, worst); others != "" {
+		count = fmt.Sprintf("%s; other keys: %s", count, others)
+	}
 	f := model.Finding{Resource: r, Check: model.CheckKeyAvailability}
 
 	switch worstRank {
@@ -154,6 +167,33 @@ func KeyAvailability(r model.Resource, s *model.BackupState, cfg Config) model.F
 	}
 	f.Summary = fmt.Sprintf("every KMS key protecting these recovery points is enabled (%s)", count)
 	return f
+}
+
+// maxOtherKeysNamed caps how many of the other keys we name inline, so a
+// resource with many keys still renders as a readable terminal table cell.
+const maxOtherKeysNamed = 3
+
+// otherKeys names every key besides worst, in the same short form used for
+// the winning/losing key, so a customer with several keys can tell which of
+// the others are fine. Capped at maxOtherKeysNamed; beyond that it says how
+// many more there are rather than listing them all.
+func otherKeys(keys []model.RecoveryPointKey, worst model.RecoveryPointKey) string {
+	var names []string
+	for _, k := range keys {
+		if k.KeyARN == worst.KeyARN {
+			continue
+		}
+		names = append(names, short(k.KeyARN))
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	if len(names) > maxOtherKeysNamed {
+		more := len(names) - maxOtherKeysNamed
+		names = names[:maxOtherKeysNamed]
+		return fmt.Sprintf("%s, and %d more", strings.Join(names, ", "), more)
+	}
+	return strings.Join(names, ", ")
 }
 
 // short trims a key ARN to its trailing id so a finding reads as prose rather

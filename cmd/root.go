@@ -127,15 +127,16 @@ func newRootCmd() *cobra.Command {
 const auditLong = `Audit whether your AWS backups could actually be restored.
 
 Inventories EBS volumes, RDS databases, and EKS cluster state across your
-enabled regions, runs five checks against them, and prints a Recoverability
+enabled regions, runs six checks against them, and prints a Recoverability
 Score with the critical gaps.
 
-The five checks:
+The six checks:
   coverage         does a backup exist at all?
   freshness        how old is the most recent successful backup?
   immutability     is it on WORM storage, or can it be deleted?
   redundancy       is a copy isolated in another region?
   restore-testing  has a restore ever actually been performed?
+  key-availability can the KMS key protecting these recovery points still decrypt them?
 
 PRIVACY
   Runs locally with your own credentials, and is strictly read-only — it calls
