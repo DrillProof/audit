@@ -138,8 +138,9 @@ func GatherBackupState(
 	p Provider,
 	res model.Resource,
 	idx *VaultIndex,
+	accountID string,
 ) *model.BackupState {
-	return GatherBackupStateInto(ctx, p, res, idx, model.NewBackupState())
+	return GatherBackupStateInto(ctx, p, res, idx, accountID, model.NewBackupState())
 }
 
 // GatherBackupStateInto merges AWS Backup evidence into a state that discovery
@@ -156,6 +157,7 @@ func GatherBackupStateInto(
 	p Provider,
 	res model.Resource,
 	idx *VaultIndex,
+	accountID string,
 	state *model.BackupState,
 ) *model.BackupState {
 	// The old body of this function unconditionally reset Immutable/CrossRegion
@@ -173,6 +175,7 @@ func GatherBackupStateInto(
 	regionsWithCopies := map[string]bool{}
 	var latest *time.Time
 	var lastRestore *time.Time
+	var keyARNs []string
 	points := 0
 
 	if res.ARN != "" {
@@ -200,6 +203,10 @@ func GatherBackupStateInto(
 						}
 						points++
 						regionsWithCopies[region] = true
+
+						if rp.EncryptionKeyArn != nil {
+							keyARNs = append(keyARNs, *rp.EncryptionKeyArn)
+						}
 
 						switch vault.Locked {
 						case model.Yes:
@@ -237,12 +244,13 @@ func GatherBackupStateInto(
 	// Only consulted when AWS Backup showed nothing, so a team using plain
 	// snapshots still gets accurate coverage and freshness.
 	if points == 0 {
-		nativePoints, nativeLatest := nativeSnapshots(ctx, p, res, state)
+		nativePoints, nativeLatest, nativeKeyARNs := nativeSnapshots(ctx, p, res, state)
 		if nativePoints > 0 {
 			points = nativePoints
 			if nativeLatest != nil && (latest == nil || nativeLatest.After(*latest)) {
 				latest = nativeLatest
 			}
+			keyARNs = append(keyARNs, nativeKeyARNs...)
 			regionsWithCopies[res.Region] = true
 			// Native EBS/RDS snapshots are not on WORM storage. That is a
 			// known negative, not an unknown.
@@ -255,6 +263,8 @@ func GatherBackupStateInto(
 	state.RecoveryPoints = points
 	state.LatestBackupAt = latest
 	state.LastRestoreAt = lastRestore
+
+	resolveKeys(ctx, p, accountID, keyARNs, res.Region, state)
 
 	// --- Immutability ---
 	switch {
@@ -301,22 +311,25 @@ func denialReason(idx *VaultIndex) string {
 }
 
 // nativeSnapshots counts EBS/RDS snapshots owned by this account for the
-// resource, as the fallback coverage signal.
+// resource, as the fallback coverage signal. It also returns the KMS key ARNs
+// those snapshots were encrypted with, since AWS Backup showing nothing is
+// exactly the case resolveKeys still needs a key source for.
 func nativeSnapshots(
 	ctx context.Context,
 	p Provider,
 	res model.Resource,
 	state *model.BackupState,
-) (int, *time.Time) {
+) (int, *time.Time, []string) {
 	c := p.For(res.Region)
 	var latest *time.Time
+	var keyARNs []string
 	count := 0
 
 	switch res.Type {
 	case model.TypeVolume:
 		volumeID := res.Attrs["volume_id"]
 		if volumeID == "" {
-			return 0, nil
+			return 0, nil, nil
 		}
 		out, err := c.EC2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 			OwnerIds: []string{"self"},
@@ -329,7 +342,7 @@ func nativeSnapshots(
 			if IsAccessDenied(err) {
 				state.MarkUnassessed(model.CheckCoverage, "ec2:DescribeSnapshots denied")
 			}
-			return 0, nil
+			return 0, nil, nil
 		}
 		for _, s := range out.Snapshots {
 			if s.State != ec2types.SnapshotStateCompleted {
@@ -338,6 +351,9 @@ func nativeSnapshots(
 			count++
 			if s.StartTime != nil && (latest == nil || s.StartTime.After(*latest)) {
 				latest = s.StartTime
+			}
+			if s.KmsKeyId != nil {
+				keyARNs = append(keyARNs, *s.KmsKeyId)
 			}
 		}
 
@@ -349,7 +365,7 @@ func nativeSnapshots(
 			if IsAccessDenied(err) {
 				state.MarkUnassessed(model.CheckCoverage, "rds:DescribeDBSnapshots denied")
 			}
-			return 0, nil
+			return 0, nil, nil
 		}
 		for _, s := range out.DBSnapshots {
 			if awssdk.ToString(s.Status) != "available" {
@@ -358,6 +374,9 @@ func nativeSnapshots(
 			count++
 			if s.SnapshotCreateTime != nil && (latest == nil || s.SnapshotCreateTime.After(*latest)) {
 				latest = s.SnapshotCreateTime
+			}
+			if s.KmsKeyId != nil {
+				keyARNs = append(keyARNs, *s.KmsKeyId)
 			}
 		}
 
@@ -369,7 +388,7 @@ func nativeSnapshots(
 			if IsAccessDenied(err) {
 				state.MarkUnassessed(model.CheckCoverage, "rds:DescribeDBClusterSnapshots denied")
 			}
-			return 0, nil
+			return 0, nil, nil
 		}
 		for _, s := range out.DBClusterSnapshots {
 			if awssdk.ToString(s.Status) != "available" {
@@ -379,8 +398,11 @@ func nativeSnapshots(
 			if s.SnapshotCreateTime != nil && (latest == nil || s.SnapshotCreateTime.After(*latest)) {
 				latest = s.SnapshotCreateTime
 			}
+			if s.KmsKeyId != nil {
+				keyARNs = append(keyARNs, *s.KmsKeyId)
+			}
 		}
 	}
 
-	return count, latest
+	return count, latest, keyARNs
 }

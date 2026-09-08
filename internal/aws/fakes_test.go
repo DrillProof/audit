@@ -15,6 +15,8 @@ import (
 	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
+	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -377,6 +379,70 @@ func (f *fakeEFS) ListTagsForResource(_ context.Context, _ *efs.ListTagsForResou
 	return &efs.ListTagsForResourceOutput{}, nil
 }
 
+// ---------------------------------------------------------------- fake KMS
+
+// kmsFakeKey is the state a fakeKMS returns for one key ARN when nothing goes
+// wrong. deletionDay, when set, is an RFC3339 date ("2026-09-14") parsed into
+// KeyMetadata.DeletionDate.
+type kmsFakeKey struct {
+	state       string
+	manager     string
+	deletionDay string
+}
+
+type fakeKMS struct {
+	states    map[string]kmsFakeKey
+	notFound  map[string]bool
+	denied    map[string]bool
+	throttled map[string]bool
+	calls     int
+}
+
+func (f *fakeKMS) DescribeKey(_ context.Context, in *kms.DescribeKeyInput, _ ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
+	f.calls++
+	id := awssdk.ToString(in.KeyId)
+
+	if f.denied[id] {
+		return nil, denied()
+	}
+	if f.throttled[id] {
+		return nil, &stubAPIErr{code: "ThrottlingException", msg: "rate exceeded"}
+	}
+	if f.notFound[id] {
+		return nil, &kmstypes.NotFoundException{Message: awssdk.String("key not found")}
+	}
+
+	k, ok := f.states[id]
+	if !ok {
+		return nil, &stubAPIErr{code: "NotFoundException", msg: "no such key"}
+	}
+
+	meta := &kmstypes.KeyMetadata{
+		KeyState:   kmstypes.KeyState(k.state),
+		KeyManager: kmstypes.KeyManagerType(k.manager),
+	}
+	if k.deletionDay != "" {
+		t, err := time.Parse("2006-01-02", k.deletionDay)
+		if err != nil {
+			return nil, err
+		}
+		meta.DeletionDate = &t
+	}
+	return &kms.DescribeKeyOutput{KeyMetadata: meta}, nil
+}
+
+// providerWithKMS is a single-region (us-east-1) fake provider for
+// resolveKeys tests, where only the KMS client matters.
+func providerWithKMS(k KMSAPI) *fakeProvider {
+	return &fakeProvider{
+		base: "us-east-1",
+		sts:  &fakeSTS{account: "111122223333"},
+		perRegion: map[string]Clients{
+			"us-east-1": {Region: "us-east-1", KMS: k},
+		},
+	}
+}
+
 // ----------------------------------------------------------- fake Provider
 
 type fakeProvider struct {
@@ -403,6 +469,7 @@ func (f *fakeProvider) For(region string) Clients {
 		S3:       &fakeS3{},
 		DynamoDB: &fakeDynamoDB{},
 		EFS:      &fakeEFS{},
+		KMS:      &fakeKMS{},
 	}
 }
 

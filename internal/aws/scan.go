@@ -211,7 +211,7 @@ func Scan(ctx context.Context, p Provider, opts ScanOptions) (*model.Result, err
 		if state == nil {
 			state = model.NewBackupState()
 		}
-		state = GatherBackupStateInto(ctx, p, res, vaults, state)
+		state = GatherBackupStateInto(ctx, p, res, vaults, identity.AccountID, state)
 
 		// Cluster state is the one resource type AWS cannot answer for. Merge
 		// in-cluster evidence when we have it, and be explicit when we do not.
