@@ -113,6 +113,11 @@ var actionGroups = []struct {
 			"elasticfilesystem:ListTagsForResource",
 		},
 	},
+	{
+		sid:     "KeyState",
+		purpose: "read whether the KMS keys protecting recovery points are still enabled",
+		actions: []string{"kms:DescribeKey"},
+	},
 }
 
 // BuildPolicy returns the least-privilege policy document.

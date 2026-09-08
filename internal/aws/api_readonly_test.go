@@ -35,6 +35,7 @@ func TestInterfacesAreReadOnly(t *testing.T) {
 		"S3API":       reflect.TypeOf((*S3API)(nil)).Elem(),
 		"DynamoDBAPI": reflect.TypeOf((*DynamoDBAPI)(nil)).Elem(),
 		"EFSAPI":      reflect.TypeOf((*EFSAPI)(nil)).Elem(),
+		"KMSAPI":      reflect.TypeOf((*KMSAPI)(nil)).Elem(),
 	}
 
 	for name, typ := range interfaces {
@@ -101,6 +102,16 @@ func TestDynamoDBAPICoversTheCallsTheScannerNeeds(t *testing.T) {
 	} {
 		_, ok := typ.MethodByName(want)
 		assert.True(t, ok, "DynamoDBAPI is missing %s", want)
+	}
+}
+
+func TestKMSAPICoversTheCallsTheScannerNeeds(t *testing.T) {
+	typ := reflect.TypeOf((*KMSAPI)(nil)).Elem()
+	for _, want := range []string{
+		"DescribeKey",
+	} {
+		_, ok := typ.MethodByName(want)
+		assert.True(t, ok, "KMSAPI is missing %s", want)
 	}
 }
 
