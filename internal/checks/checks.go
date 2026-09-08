@@ -1,4 +1,4 @@
-// Package checks holds the five recoverability checks.
+// Package checks holds the six recoverability checks.
 //
 // Every check is a pure function of (resource, observed backup state, config).
 // No I/O, no clock reads except the one passed in — which is what makes them
@@ -31,7 +31,7 @@ func DefaultConfig() Config {
 	}
 }
 
-// Run evaluates all five checks for one resource, in canonical order.
+// Run evaluates all six checks for one resource, in canonical order.
 func Run(r model.Resource, s *model.BackupState, cfg Config) []model.Finding {
 	return []model.Finding{
 		Coverage(r, s, cfg),
@@ -39,6 +39,7 @@ func Run(r model.Resource, s *model.BackupState, cfg Config) []model.Finding {
 		Immutability(r, s, cfg),
 		Redundancy(r, s, cfg),
 		RestoreTested(r, s, cfg),
+		KeyAvailability(r, s, cfg),
 	}
 }
 
