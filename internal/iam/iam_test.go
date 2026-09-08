@@ -22,6 +22,7 @@ var servicePrefix = map[string]string{
 	"S3API":       "s3",
 	"DynamoDBAPI": "dynamodb",
 	"EFSAPI":      "elasticfilesystem",
+	"KMSAPI":      "kms",
 }
 
 // iamActionExceptions covers the places where the IAM action name differs from
@@ -44,6 +45,7 @@ func interfaceTypes() map[string]reflect.Type {
 		"S3API":       reflect.TypeOf((*awsx.S3API)(nil)).Elem(),
 		"DynamoDBAPI": reflect.TypeOf((*awsx.DynamoDBAPI)(nil)).Elem(),
 		"EFSAPI":      reflect.TypeOf((*awsx.EFSAPI)(nil)).Elem(),
+		"KMSAPI":      reflect.TypeOf((*awsx.KMSAPI)(nil)).Elem(),
 	}
 }
 
@@ -225,4 +227,27 @@ func TestEFSNeedsNoNewBackupActions(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 5, backupActions, "the backup:* set must not grow for EFS")
+}
+
+func TestPolicyGrantsKeyStateOnly(t *testing.T) {
+	doc := BuildPolicy()
+	var all []string
+	for _, st := range doc.Statement {
+		all = append(all, st.Action...)
+	}
+	joined := strings.Join(all, " ")
+
+	if !strings.Contains(joined, "kms:DescribeKey") {
+		t.Fatal("kms:DescribeKey missing — KEY_AVAILABILITY cannot run")
+	}
+	// The trust claim in the docs is "state only, never material, never
+	// decryption". This is the test that makes that claim true.
+	for _, forbidden := range []string{
+		"kms:Decrypt", "kms:GenerateDataKey", "kms:ReEncrypt",
+		"kms:GetKeyPolicy", "kms:ListAliases", "kms:ScheduleKeyDeletion",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("policy requests %s — it must not", forbidden)
+		}
+	}
 }

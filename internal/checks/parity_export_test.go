@@ -85,6 +85,22 @@ func TestEmitCheckFixtures(t *testing.T) {
 		return s
 	}
 
+	keyRes := model.Resource{Display: "data (EBS)", Name: "data", Type: model.TypeVolume, Region: "us-east-1"}
+	withKeys := func(keys ...model.RecoveryPointKey) *model.BackupState {
+		s := model.NewBackupState()
+		s.RecoveryPoints = 1
+		s.Keys = keys
+		return s
+	}
+	custKey := func(state string) model.RecoveryPointKey {
+		return model.RecoveryPointKey{
+			KeyARN: "arn:aws:kms:us-east-1:111122223333:key/abc", State: state, CrossAccount: model.No,
+		}
+	}
+	pendingDel := custKey("PendingDeletion")
+	delDate := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	pendingDel.DeletionDate = &delDate
+
 	type fixtureCase struct {
 		name     string
 		resource model.Resource
@@ -250,6 +266,47 @@ func TestEmitCheckFixtures(t *testing.T) {
 			s.MarkUnassessed(model.CheckRedundancy, "elasticfilesystem:DescribeReplicationConfigurations denied")
 			return s
 		}()},
+
+		// KeyAvailability: one case per classify() branch, plus the two
+		// aggregation cases (worst-of-N, and the moot "no keys at all").
+		{"key-enabled", keyRes, withKeys(custKey("Enabled"))},
+		{"key-disabled", keyRes, withKeys(custKey("Disabled"))},
+		{"key-pending-deletion", keyRes, withKeys(pendingDel)},
+		{"key-deleted", keyRes, withKeys(custKey("Deleted"))},
+		{"key-pending-import", keyRes, withKeys(custKey("PendingImport"))},
+		{"key-unavailable", keyRes, withKeys(custKey("Unavailable"))},
+		{"key-aws-managed", keyRes, withKeys(model.RecoveryPointKey{
+			KeyARN: "arn:aws:kms:us-east-1:111122223333:key/aws", State: "Enabled", AWSManaged: true, CrossAccount: model.No,
+		})},
+		{"key-cross-account-enabled", keyRes, withKeys(model.RecoveryPointKey{
+			KeyARN: "arn:aws:kms:us-east-1:999988887777:key/x", State: "Enabled", CrossAccount: model.Yes,
+		})},
+		{"key-cross-account-unresolvable", keyRes, withKeys(model.RecoveryPointKey{
+			KeyARN: "arn:aws:kms:us-east-1:999988887777:key/x", CrossAccount: model.Yes,
+		})},
+		{"key-account-unknown", keyRes, withKeys(model.RecoveryPointKey{
+			KeyARN: "arn:aws:kms:us-east-1:999988887777:key/x", State: "Enabled", CrossAccount: model.Unknown,
+		})},
+		{"key-unencrypted-backups", keyRes, withKeys()},
+		{"key-no-backup-at-all", keyRes, model.NewBackupState()},
+		{"key-worst-of-three-wins", keyRes, withKeys(custKey("Enabled"), custKey("Disabled"), custKey("Enabled"))},
+
+		// kms:DescribeKey denied ⇒ SKIPPED + skipIsAccessGap + the action
+		// named, never a FAIL. Mirrors s3-permission-denied,
+		// dynamo-permission-denied, efs-permission-denied.
+		{"key-permission-denied", keyRes, func() *model.BackupState {
+			s := withKeys(custKey("Enabled"))
+			s.MarkUnassessed(model.CheckKeyAvailability, "kms:DescribeKey denied")
+			return s
+		}()},
+
+		// Same-account key whose state could not be read (throttle, 5xx,
+		// malformed ARN — resolveKeys' default branch, never a permission
+		// denial). Must be moot, not an access gap, and must not claim
+		// cross-account.
+		{"key-same-account-unreadable", keyRes, withKeys(model.RecoveryPointKey{
+			KeyARN: "arn:aws:kms:us-east-1:111122223333:key/abc", State: "", CrossAccount: model.No,
+		})},
 	}
 
 	type outCase struct {
@@ -343,6 +400,14 @@ type wireEFS struct {
 	Replication      wireEFSReplication `json:"replication"`
 }
 
+type wireKey struct {
+	KeyARN       string  `json:"keyArn"`
+	State        string  `json:"state,omitempty"`
+	AWSManaged   bool    `json:"awsManaged,omitempty"`
+	CrossAccount string  `json:"crossAccount"`
+	DeletionDate *string `json:"deletionDate,omitempty"`
+}
+
 type wireState struct {
 	RecoveryPoints           int               `json:"recoveryPoints"`
 	LatestBackupAt           *string           `json:"latestBackupAt,omitempty"`
@@ -355,6 +420,7 @@ type wireState struct {
 	S3                       *wireS3           `json:"s3,omitempty"`
 	Dynamo                   *wireDynamo       `json:"dynamo,omitempty"`
 	EFS                      *wireEFS          `json:"efs,omitempty"`
+	Keys                     []wireKey         `json:"keys,omitempty"`
 }
 
 type wireFinding struct {
@@ -458,6 +524,15 @@ func toWireState(s *model.BackupState) wireState {
 				DestRegions: s.EFS.Replication.DestRegions,
 			},
 		}
+	}
+	for _, k := range s.Keys {
+		ws.Keys = append(ws.Keys, wireKey{
+			KeyARN:       k.KeyARN,
+			State:        k.State,
+			AWSManaged:   k.AWSManaged,
+			CrossAccount: k.CrossAccount.String(),
+			DeletionDate: rfc3339(k.DeletionDate),
+		})
 	}
 	return ws
 }

@@ -53,7 +53,7 @@ Global flags:
 
 ---
 
-## 4. What `scan` audits (the five checks)
+## 4. What `scan` audits (the six checks)
 For **EBS volumes, RDS instances/clusters, and EKS clusters (incl. etcd)** across enabled regions:
 
 1. **Coverage** — does each resource have a backup at all? (AWS Backup recovery points, EBS snapshots, RDS snapshots/automated backups, EKS: is there a Velero backup / is etcd captured?) → flag anything with **none**.
@@ -138,7 +138,7 @@ audit/
     aws/               # per-service read-only clients behind narrow interfaces (+ fakes)
       ec2.go rds.go backup.go eks.go s3.go sts.go
     k8s/               # client-go + velero detection
-    checks/            # the 5 checks, each pure & testable
+    checks/            # the 6 checks, each pure & testable
     score/             # scoring function (documented weights) + tests
     report/            # table / json / sarif renderers
     iam/               # policy + terraform emitter for `init`
@@ -148,7 +148,7 @@ audit/
 ```
 
 ## 11. Definition of done (v1)
-- [ ] `scan` inventories EBS + RDS + EKS/etcd across enabled regions, runs the 5 checks, prints a table + Recoverability Score.
+- [ ] `scan` inventories EBS + RDS + EKS/etcd across enabled regions, runs the 6 checks, prints a table + Recoverability Score.
 - [ ] Provider auto-detected (AWS); regions auto-discovered; flags only to narrow/override.
 - [ ] `score --fail-under` gates CI (correct exit codes); `report` outputs json + sarif; `init` emits IAM policy + Terraform.
 - [ ] Read-only enforced in code (no mutating AWS calls); graceful skips on missing permissions.

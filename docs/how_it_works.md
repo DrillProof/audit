@@ -67,7 +67,7 @@ denied. Run `./drillproof audit init` to get the exact policy.
 
 The important architectural line: **discovery talks to AWS, checks do not.**
 Discovery translates SDK responses into one plain struct (`model.BackupState`),
-and the five checks are pure functions of that struct. That is why the whole test
+and the six checks are pure functions of that struct. That is why the whole test
 suite runs with no AWS credentials, and why the score is reproducible.
 
 ---
@@ -359,7 +359,7 @@ cli/
       backup.go           vault index, recovery points, native fallback
       scan.go             orchestration, concurrency, Velero merge
     k8s/velero.go         Velero detection (discovery + dynamic client)
-    checks/checks.go      the five checks — pure
+    checks/checks.go      the six checks — pure
     score/score.go        weights + explanation
     report/               table.go json.go sarif.go html.go
     iam/iam.go            policy / Terraform / CFN / RBAC emitters

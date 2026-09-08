@@ -127,6 +127,12 @@ var ruleDescriptions = map[model.CheckID]struct {
 		help:  "Perform a restore into an isolated environment, or schedule recurring drills.",
 		level: "warning",
 	},
+	model.CheckKeyAvailability: {
+		short: "KMS key protecting backups is not available",
+		full:  "The KMS key that recovery points were encrypted with is disabled, missing key material, scheduled for deletion, already deleted, or lives in another account, so a restore may fail or may depend on another account's cooperation.",
+		help:  "Re-enable or re-import the key, cancel a pending deletion, or re-encrypt backups with a key you control.",
+		level: "error",
+	},
 }
 
 // RenderSARIF writes findings as SARIF 2.1.0 for CI code-scanning surfaces.

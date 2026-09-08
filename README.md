@@ -104,7 +104,7 @@ drillproof audit scan --kubeconfig ~/.kube/config --context prod
 
 | Command   | What it does                                                    |
 | --------- | --------------------------------------------------------------- |
-| `scan`    | Inventory + all five checks + score (the default)               |
+| `scan`    | Inventory + all six checks + score (the default)                |
 | `score`   | Just the score; `--fail-under N` gates CI                       |
 | `report`  | Render as `html`, `json`, or `sarif`                             |
 | `init`    | Emit the least-privilege IAM policy, Terraform, CFN, or K8s RBAC |
@@ -289,7 +289,7 @@ cmd/                cobra commands
 internal/
   aws/              read-only clients behind narrow interfaces (+ fakes)
   k8s/              Velero detection via discovery + dynamic client
-  checks/           the five checks — pure functions, no I/O
+  checks/           the six checks — pure functions, no I/O
   score/            the scoring function and its documented weights
   report/           table / json / sarif / html renderers
   iam/              policy, Terraform, CloudFormation, RBAC emitters

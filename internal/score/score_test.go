@@ -427,3 +427,72 @@ func TestProductionFileSystemIsWeightedLikeAProductionDatabase(t *testing.T) {
 	}})
 	assert.Equal(t, 2, s.ResourceScores[0].Weight)
 }
+
+func keyFinding(status model.Status, summary string) model.Finding {
+	return model.Finding{
+		Resource: model.Resource{Display: "data (EBS)", Name: "data", Type: model.TypeVolume, Region: "us-east-1"},
+		Check:    model.CheckKeyAvailability,
+		Status:   status,
+		Summary:  summary,
+	}
+}
+
+func TestKeyAvailabilityScoring(t *testing.T) {
+	t.Run("a deleted key zeroes the resource and records a penalty", func(t *testing.T) {
+		s := Compute([]model.Finding{
+			keyFinding(model.StatusFail, "the KMS key protecting these recovery points no longer exists"),
+		})
+		if s.Value != 0 {
+			t.Fatalf("score = %d, want 0", s.Value)
+		}
+		if len(s.Penalties) != 1 || s.Penalties[0].Points != WeightKeyUnrecoverable {
+			t.Fatalf("penalties = %+v", s.Penalties)
+		}
+	})
+
+	t.Run("a disabled key deducts a fixed weight", func(t *testing.T) {
+		s := Compute([]model.Finding{
+			keyFinding(model.StatusFail, "the KMS key protecting these recovery points is disabled"),
+		})
+		if s.Value != PerfectScore-WeightKeyUnavailableFail {
+			t.Fatalf("score = %d, want %d", s.Value, PerfectScore-WeightKeyUnavailableFail)
+		}
+	})
+
+	t.Run("a cross-account warn deducts, it does not fall through", func(t *testing.T) {
+		s := Compute([]model.Finding{
+			keyFinding(model.StatusWarn, "these recovery points depend on a KMS key in another account"),
+		})
+		if s.Value != PerfectScore-WeightKeyCrossAccountWarn {
+			t.Fatalf("score = %d, want %d", s.Value, PerfectScore-WeightKeyCrossAccountWarn)
+		}
+	})
+
+	t.Run("skipped deducts nothing", func(t *testing.T) {
+		s := Compute([]model.Finding{
+			{
+				Resource: model.Resource{Display: "data (EBS)", Type: model.TypeVolume, Region: "us-east-1"},
+				Check:    model.CheckKeyAvailability,
+				Status:   model.StatusSkipped,
+			},
+		})
+		if len(s.Penalties) != 0 {
+			t.Fatalf("penalties = %+v", s.Penalties)
+		}
+	})
+}
+
+// TestEveryCheckIsWeighed closes the fail-open default in weigh(): a new check
+// added to AllChecks without a weigh branch scores zero silently, and nothing
+// else in the suite would notice.
+func TestEveryCheckIsWeighed(t *testing.T) {
+	r := model.Resource{Display: "data (EBS)", Name: "data", Type: model.TypeVolume, Region: "us-east-1"}
+	for _, c := range model.AllChecks {
+		t.Run(string(c), func(t *testing.T) {
+			s := Compute([]model.Finding{{Resource: r, Check: c, Status: model.StatusFail}})
+			if len(s.Penalties) == 0 {
+				t.Fatalf("check %q has no weigh() branch — a FAIL deducts nothing", c)
+			}
+		})
+	}
+}

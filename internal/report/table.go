@@ -115,7 +115,7 @@ func RenderTable(dst io.Writer, result *model.Result, opts Options) error {
 		t.Style().Format.Header = text.FormatUpper
 
 		t.AppendHeader(table.Row{
-			"RESOURCE", "TYPE", "BACKUP", "AGE", "IMMUTABLE", "X-REGION", "RESTORE",
+			"RESOURCE", "TYPE", "BACKUP", "AGE", "IMMUTABLE", "X-REGION", "RESTORE", "KEY",
 		})
 
 		for _, row := range result.Rows {
@@ -127,6 +127,7 @@ func RenderTable(dst io.Writer, result *model.Result, opts Options) error {
 				colorCell(p, tristateCell(row.State.Immutable, row.Statuses[model.CheckImmutability]), row.Statuses[model.CheckImmutability]),
 				colorCell(p, tristateCell(row.State.CrossRegion, row.Statuses[model.CheckRedundancy]), row.Statuses[model.CheckRedundancy]),
 				colorCell(p, restoreCell(row), row.Statuses[model.CheckRestoreTested]),
+				colorCell(p, keyCell(row), row.Statuses[model.CheckKeyAvailability]),
 			})
 		}
 		t.Render()
@@ -217,6 +218,22 @@ func restoreCell(row model.Row) string {
 		return "pending"
 	case model.StatusFail:
 		return "untested"
+	default:
+		return "-"
+	}
+}
+
+// keyCell renders the key-availability column using the same vocabulary as
+// the other status-driven columns: an outcome word, or "-" when the check was
+// not assessed or had nothing to assess.
+func keyCell(row model.Row) string {
+	switch row.Statuses[model.CheckKeyAvailability] {
+	case model.StatusOK:
+		return "ok"
+	case model.StatusWarn:
+		return "warn"
+	case model.StatusFail:
+		return "fail"
 	default:
 		return "-"
 	}

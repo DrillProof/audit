@@ -8,8 +8,9 @@ import (
 )
 
 // pitrOnly reports a table protected by Point-in-Time Recovery and nothing
-// else. PITR is continuous and single-region, which changes what three of the
-// five checks can honestly say.
+// else. PITR is continuous and single-region, which changes what four of the
+// six checks can honestly say (freshness, immutability, redundancy, and
+// key-availability).
 func pitrOnly(s *model.BackupState) bool {
 	return s.Dynamo != nil && s.Dynamo.PITR == model.Yes && s.RecoveryPoints == 0
 }

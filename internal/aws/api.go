@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -100,6 +101,15 @@ type EFSAPI interface {
 	ListTagsForResource(context.Context, *efs.ListTagsForResourceInput, ...func(*efs.Options)) (*efs.ListTagsForResourceOutput, error)
 }
 
+// KMSAPI covers key state, and nothing else.
+//
+// DescribeKey returns metadata only — KeyState and KeyManager. No key material
+// is read and no decryption is attempted, which is the claim the customer-facing
+// docs make and `api_readonly_test.go` enforces.
+type KMSAPI interface {
+	DescribeKey(context.Context, *kms.DescribeKeyInput, ...func(*kms.Options)) (*kms.DescribeKeyOutput, error)
+}
+
 // Clients is the per-region bundle the scanner works with.
 type Clients struct {
 	Region   string
@@ -110,6 +120,7 @@ type Clients struct {
 	S3       S3API
 	DynamoDB DynamoDBAPI
 	EFS      EFSAPI
+	KMS      KMSAPI
 }
 
 // Provider builds clients. Swapped for a fake in tests.
@@ -175,6 +186,7 @@ func (p *sdkProvider) For(region string) Clients {
 		S3:       s3.NewFromConfig(cfg),
 		DynamoDB: dynamodb.NewFromConfig(cfg),
 		EFS:      efs.NewFromConfig(cfg),
+		KMS:      kms.NewFromConfig(cfg),
 	}
 }
 
